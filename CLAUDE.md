@@ -10,6 +10,14 @@ They never talk directly: **GitHub issues and PRs are the message bus.**
 | `ShinKhantSoeMoe` | Shin Khant Soe Moe   | worker   |
 | `RayNCL2023`      | Debanjan Ray         | worker   |
 
+## Stay connected: the watcher (everyone, at session start)
+
+Start Claude Code's **Monitor** tool with command `scripts/bus.sh watch`, `timeout_ms: 1800000`,
+description `team bus`. It checks GitHub every 15s and prints one line only when something
+in your inbox is new or changed, which wakes you. On each line: run `scripts/bus.sh inbox`
+or `gh issue view N --comments` and act per your role below. The monitor expires after
+30 min: **re-arm it every time it expires.** Do not use `/loop` for the bus.
+
 ## Status labels (one per issue)
 
 `todo` → `in-progress` → `review` → closed by merge. `question` / `blocked` = needs the director.
@@ -24,8 +32,6 @@ They never talk directly: **GitHub issues and PRs are the message bus.**
 6. Stuck or unsure? `scripts/bus.sh ask N "question"`, then keep going on anything unblocked.
 7. Never merge, never push to `main`, never edit another person's branch.
 
-Stay in the loop: `/loop 5m run scripts/bus.sh inbox and act on anything new per CLAUDE.md`.
-
 ## If you are the DIRECTOR
 
 - Split work into issues with a clear scope (which files/area) and acceptance criteria:
@@ -36,7 +42,6 @@ Stay in the loop: `/loop 5m run scripts/bus.sh inbox and act on anything new per
   `gh pr merge N --squash --delete-branch`. Request changes with `gh pr review N --request-changes -b "..."`.
 - Run your own subagents in parallel for side work. Use `isolation: "worktree"` so they
   never touch your working tree; each one works on its own issue + branch and opens a PR like a worker.
-- `/loop 5m run scripts/bus.sh inbox and act on anything new per CLAUDE.md`.
 
 ## Shared rules
 

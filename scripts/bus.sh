@@ -33,6 +33,22 @@ case $cmd in
       gh pr list --author @me --search "review:changes_requested"
     fi ;;
 
+  watch) # one stdout line per new/changed inbox item; run under Claude Code's Monitor tool
+    if [[ $me == "$DIRECTOR" ]]; then iq="is:open label:question,blocked"; pq="is:open"
+    else iq="is:open assignee:@me"; pq="is:open author:@me"; fi
+    # shortcut: updatedAt also changes on your own actions, so you may get woken by yourself; filter by actor if noisy
+    prev=
+    while :; do
+      if cur=$( { gh issue list --search "$iq" --json number,title,labels,updatedAt \
+                    --jq '.[] | "issue #\(.number) [\([.labels[].name] | join(","))] \(.title) @\(.updatedAt)"'
+                  gh pr list --search "$pq" --json number,title,reviewDecision,updatedAt \
+                    --jq '.[] | "pr #\(.number) [\(.reviewDecision)] \(.title) @\(.updatedAt)"'; } | sort ); then
+        comm -13 <(echo "$prev") <(echo "$cur") | grep -v '^$' || true
+        prev=$cur
+      fi # on a network error keep the old snapshot and retry next tick
+      sleep "${BUS_POLL:-15}"
+    done ;;
+
   task) # director: task "title" "body" [assignee]
     need 2 '"title" "body" [github-login]' "$@"
     gh issue create --title "$1" --body "$2" --label todo ${3:+--assignee "$3"} ;;
@@ -60,5 +76,5 @@ case $cmd in
     gh issue edit "$1" --add-label review --remove-label in-progress ;;
 
   *)
-    echo "usage: bus.sh [whoami|board|inbox|task|claim|ask|answer|pr]" >&2; exit 2 ;;
+    echo "usage: bus.sh [whoami|board|inbox|watch|task|claim|ask|answer|pr]" >&2; exit 2 ;;
 esac

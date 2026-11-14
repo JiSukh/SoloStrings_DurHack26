@@ -11,6 +11,11 @@ for bin in gh git; do
 echo "$bin \$*" >>"$log"
 [[ "\$*" == "api user --jq .login" ]] && echo "\${FAKE_LOGIN:-ShinKhantSoeMoe}"
 [[ "\$1 \$2" == "issue view" ]] && echo "Some task"
+if [[ "\$1 \$2" == "issue list" && -n "\${FAKE_WATCH:-}" ]]; then
+  n=\$(( \$(cat "$tmp/n" 2>/dev/null || echo 0) + 1 )); echo \$n >"$tmp/n"
+  cat "$tmp/issues.\$(( n < 2 ? n : 2 ))"
+fi
+[[ "\$1 \$2" == "pr list" && -n "\${FAKE_WATCH:-}" ]] && echo "pr #9 [] p @t1"
 true
 EOF
   chmod +x "$tmp/$bin"
@@ -37,4 +42,10 @@ has "gh issue create --title T --body B --label todo"
 grep -q -- "--assignee" <(tail -1 "$log") && fail "no assignee flag when none given"
 
 bus claim 2>/dev/null && fail "claim without N should exit non-zero"
+
+# watch: first tick reports everything, later ticks only what's new or changed
+printf 'issue #1 [todo] a @t1\n' >"$tmp/issues.1"
+printf 'issue #1 [todo] a @t1\nissue #2 [todo] b @t1\n' >"$tmp/issues.2"
+out=$(PATH="$tmp:$PATH" FAKE_WATCH=1 BUS_POLL=0.1 timeout 1 "$root/scripts/bus.sh" watch || true)
+[[ $out == $'issue #1 [todo] a @t1\npr #9 [] p @t1\nissue #2 [todo] b @t1' ]] || fail "watch output was: $out"
 echo "bus_test: ok"
