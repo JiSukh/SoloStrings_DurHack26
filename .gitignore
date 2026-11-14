@@ -1,0 +1,8 @@
+.claude/settings.local.json
+.claude/worktrees/
+.env*
+node_modules/
+__pycache__/
+.venv/
+.claude/settings.json
+.orchestrator/
