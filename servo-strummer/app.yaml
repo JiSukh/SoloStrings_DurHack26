@@ -1,0 +1,6 @@
+name: Servo Strummer
+icon: 🎸
+description: Strum six servos from a web page
+
+bricks:
+  - arduino:web_ui

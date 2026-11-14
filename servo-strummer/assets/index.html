@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Servo Strummer</title>
+  <style>
+    :root { --bg: #f6f5f2; --fg: #1d1d1b; --accent: #d9480f; --muted: #6b6b66; }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #161615; --fg: #ecebe6; --accent: #ff7a3d; --muted: #9a9a93; }
+    }
+    body {
+      margin: 0; min-height: 100vh; display: grid; place-items: center;
+      background: var(--bg); color: var(--fg);
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    main { text-align: center; padding: 16px; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 24px; }
+    button {
+      width: 200px; height: 200px; border-radius: 50%; border: none;
+      background: var(--accent); color: #fff; font-size: 1.6rem; font-weight: 700;
+      cursor: pointer; transition: transform .08s, opacity .2s;
+    }
+    button:active { transform: scale(.96); }
+    button:disabled { opacity: .5; cursor: wait; }
+    button:focus-visible { outline: 3px solid var(--fg); outline-offset: 4px; }
+    p { color: var(--muted); min-height: 1.5em; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Servo Strummer</h1>
+    <button id="strum">Strum</button>
+    <p id="status" role="status"></p>
+  </main>
+  <script>
+    const btn = document.getElementById('strum');
+    const status = document.getElementById('status');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      status.textContent = 'Strumming…';
+      try {
+        const res = await fetch('/strum', { method: 'POST' });
+        const data = await res.json();
+        status.textContent = data.ok ? 'Done' : 'Still strumming, try again';
+      } catch (e) {
+        status.textContent = 'Board not reachable';
+      }
+      btn.disabled = false;
+    });
+  </script>
+</body>
+</html>
