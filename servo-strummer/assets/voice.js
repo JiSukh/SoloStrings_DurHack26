@@ -148,7 +148,9 @@ export const SONGS = [
 // What was said -> { action, ... } or null if it isn't a command.
 //   play { pattern|null, bpm? }   stop   tempo { bpm }   tempo_delta { delta }
 //   next   prev   chord { chord|'' }   song { chords[], name? }   explain { chord }   what   help
-export function parseCommand(text, { patterns = [], chords = [] } = {}) {
+//   teach { song } (one of `lessons`, by name) | teach { random: true } | teach { query } (any other song)
+// lessons = [{ name, match }] (lesson.js's LESSONS): the songs that can be taught without a look-up.
+export function parseCommand(text, { patterns = [], chords = [], lessons = [] } = {}) {
   const t = normalise(text);
   if (!t) return null;
   const tokens = t.split(' ');
@@ -158,6 +160,23 @@ export function parseCommand(text, { patterns = [], chords = [] } = {}) {
 
   if (has(/\bwhat am i (playing|holding)\b/) || (has(/\b(what|which) chord\b/) && has(/\b(am i|is this|is that|is it|playing|holding)\b/)))
     return { action: 'what' };
+
+  // "teach me Riptide", "teach me this song, Wonderwall", "practise random chords". A chord
+  // ("teach me A minor") is still explained below; "stop the lesson" is still a stop.
+  if (has(/\b(teach|learn|practi[cs]e|lesson)\b/) && !has(/\b(stop|end|quit|cancel|enough)\b/)) {
+    if (has(/\brandom\b|\b(basic|easy|simple|some|any) chords\b|\bchord (practi[cs]e|changes)\b/)) return { action: 'teach', random: true };
+    const known = lessons.find(l => l.match.test(t));
+    if (known) return { action: 'teach', song: known.name };
+    const m = /\b(?:teach|learn|practi[cs]e)\b(?: me| us)?(?: how)?(?: to)?(?: play)?\s*(.*)$/.exec(t);
+    const rest = (m ? m[1] : '').split(' ').filter(Boolean);
+    const aSong = has(/\bsong\b/);
+    if (aSong || rest.length > 4 || !chordsIn(rest, chords).length) {
+      const query = rest.join(' ').replace(/^(?:(?:the|this|that|a|my) )?(?:song\b ?)?(?:called |named )?/, '')
+        .replace(/\b(please|on (the )?guitar)\b/g, '').replace(/\s+/g, ' ').trim();
+      if (query) return { action: 'teach', query };
+      return aSong && lessons.length ? { action: 'teach', song: lessons[0].name } : { action: 'teach', random: true };
+    }
+  }
 
   if (has(/\bhow (do|can|would|should) (i|you|we) (play|make|hold|finger)\b|\bhow to (play|make|hold|finger)\b|\b(show|teach|tell) me\b|\bwhat is\b|\bwhat s\b|\bwhats\b|\bfingering\b/)) {
     const chord = pickChord(tokens, chords);
@@ -198,8 +217,9 @@ export function parseCommand(text, { patterns = [], chords = [] } = {}) {
 }
 
 // Words to bias speech-to-text towards: pattern names, chord names and the command words.
-export function keyterms(patterns, chords) {
-  const terms = new Set(['guitar', 'tempo', 'BPM', 'faster', 'slower', 'chord', 'chords', 'twelve bar blues']);
+export function keyterms(patterns, chords, songs = []) {
+  const terms = new Set(['guitar', 'tempo', 'BPM', 'faster', 'slower', 'chord', 'chords', 'twelve bar blues',
+    'teach me', 'random chords', ...songs]);
   for (const p of patterns) { const w = patternWords(p).slice(0, 5).join(' '); if (w) terms.add(w); }
   for (const c of chords) terms.add(spokenChord(c));
   return [...terms].filter(k => k.length <= 50);

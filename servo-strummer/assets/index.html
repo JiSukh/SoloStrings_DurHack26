@@ -59,7 +59,9 @@
 
     .twin { display: block; width: 100%; height: 13rem; border-radius: var(--radius-sm); background: var(--soft); }
     .row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
-    .row + .row, .twin + .row { margin-top: .75rem; }
+    .lane { display: block; width: 100%; height: 11rem; border-radius: var(--radius-sm); background: var(--soft); }
+    .row + .row, .twin + .row, .lane + .row { margin-top: .75rem; }
+    select { min-height: 2.75rem; padding: 0 .6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); font-size: 1rem; flex: 1; min-width: 8rem; }
     .check { display: inline-flex; align-items: center; gap: .45rem; min-height: 2.75rem; font-size: .92rem; }
     .check input { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
 
@@ -119,6 +121,18 @@
         </section>
 
         <section class="card">
+          <h2>Lesson <span class="label" id="lessonTitle">play each chord as it reaches the line</span></h2>
+          <canvas id="lane" class="lane" aria-label="Lesson: chords slide to the line and turn green when you play them right, red when you don't"></canvas>
+          <div class="row">
+            <button class="btn primary" id="lessonRandom">Random chords</button>
+            <select id="lessonSong" aria-label="Song to learn"></select>
+            <button class="btn" id="lessonStart">Teach me</button>
+            <button class="btn" id="lessonStop" hidden>End lesson</button>
+            <strong class="heard" id="lessonScore" role="status"></strong>
+          </div>
+        </section>
+
+        <section class="card">
           <h2>Guitar <span class="label">mirrors the robot</span></h2>
           <canvas id="twin" class="twin" aria-label="Virtual guitar: strings light up as they're plucked"></canvas>
           <div class="row">
@@ -166,7 +180,7 @@
           </div>
           <div class="log" role="status">
             <p><span class="muted">Heard</span> <span id="voiceHeard">–</span></p>
-            <p><span class="muted">Did</span> <strong id="voiceDid">Hold the button or the space bar and speak.</strong></p>
+            <p><span class="muted">Did</span> <strong id="voiceDid">Hold the button or the space bar and speak, or press the knob.</strong></p>
           </div>
         </section>
 
@@ -204,6 +218,8 @@
     import { VirtualGuitar, barLength } from './twin.js';
     import { parseCommand, spokenChord, chordHelp, keyterms } from './voice.js';
     import { transcribe, tts, Speaker, VoiceMic, DEFAULT_VOICE } from './eleven.js';
+    import { LESSONS, Lesson, LessonLane, randomChords, cleanProgression, earShapes } from './lesson.js';
+    import { songChords } from './gemini.js';
 
     const $ = id => document.getElementById(id);
     const api = async (method, path, params) => {
@@ -217,6 +233,11 @@
     let clockOffset = 0, mirrored = null, sim = null;  // sim = { next: ms, timer } while previewing without the robot
     let explaining = false;
     let secret = { enabled: false, key: '', voice_id: '' };  // filled from GET /config below
+    let gemini = { enabled: false, key: '', model: '' };     // same; optional
+    const lane = new LessonLane($('lane'));
+    lane.idle = 'Press Random chords, or say “teach me Riptide”.';
+    let lesson = null, lessonEar = {}, lessonTimers = [], talkCount = null;
+    const lessonOn = () => !!lesson && lesson.endedAt === null;
 
     const pressOnly = (container, match) => { for (const b of container.children) b.setAttribute('aria-pressed', b.dataset.value === match); };
     const knobOn = () => !!last && last.knob_bpm !== null && last.knob_bpm !== undefined;
@@ -230,7 +251,7 @@
       say(!r.ok ? r.error : r.switched ? 'Switching at the next bar…' : '');
       refresh();
     };
-    $('stop').onclick = async () => { stopSim(); await api('POST', '/stop'); say('Stopping at the end of the bar…'); };
+    $('stop').onclick = async () => { stopSim(); endLesson(); await api('POST', '/stop'); say('Stopping at the end of the bar…'); };
     $('bpm').oninput = e => $('bpmValue').textContent = `${e.target.value} BPM`;
     $('bpm').onchange = e => api('POST', '/tempo', { bpm: e.target.value });
 
@@ -248,8 +269,13 @@
           const startIn = s.bar.start * 1000 - clockOffset - performance.now(), len = barLength(s.bar.steps);
           twin.playBar(s.bar.steps, startIn, CHORDS[s.bar.chord] || null);
           callout(s.bar.chord, s.bar.next, performance.now() + startIn + len, len / 4);
+          if (lessonOn()) lessonBar(s.bar, performance.now() + startIn, len);
         }
-        if (!s.playing && !sim && !explaining) twin.shape = CHORDS[s.chord] || null;
+        if (lessonOn() && lesson.playing && !s.playing) endLesson();  // stopped from somewhere else (knob at 0, Stop)
+        // the knob's button was pressed: talk to the coach
+        if (talkCount !== null && s.talk > talkCount) knobPressed();
+        talkCount = s.talk ?? null;
+        if (!s.playing && !sim && !explaining && !lessonOn()) twin.shape = CHORDS[s.chord] || null;
         $('songRow').hidden = !s.song;
         $('songNow').textContent = s.song ? s.song.join(' · ') : '';
         $('nowChord').textContent = s.chord || 'All';
@@ -319,10 +345,11 @@
     })();
 
     // ---------- chord by ear (maths in listen.js) ----------
-    const FFT = 16384, GATE_DB = -70, MIN_SCORE = 0.85, MIN_MARGIN = 0.01;
-    $('micStart').onclick = async () => {
-      $('micStart').disabled = true;
-      try {
+    const FFT = 16384, GATE_DB = -70, MIN_SCORE = 0.85, MIN_MARGIN = 0.01, LESSON_SCORE = 0.8;
+    let ear = null;  // the open microphone, once: shared by chord by ear and the lessons
+    function startEar() {
+      return ear ||= (async () => {
+        $('micStart').disabled = true;
         // the browser's voice processing would filter out the very notes we want
         const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
         const ctx = new AudioContext();
@@ -336,17 +363,22 @@
           let peak = -Infinity;
           for (let k = Math.ceil(FMIN / binHz); k <= FMAX / binHz; k++) peak = Math.max(peak, db[k]);
           $('level').value = Math.max(-100, peak);
-          if (peak < GATE_DB) { $('heard').textContent = 'too quiet'; earVote(null); return; }
-          const r = matchChord(chroma(Array.from(db, d => 10 ** (d / 20)), ctx.sampleRate, FFT), CHORDS);
+          const heard = peak < GATE_DB ? null : chroma(Array.from(db, d => 10 ** (d / 20)), ctx.sampleRate, FFT);
+          if (lessonOn()) return lessonHear(heard);  // a lesson marks your chords; the robot doesn't follow them
+          if (!heard) { $('heard').textContent = 'too quiet'; earVote(null); return; }
+          const r = matchChord(heard, CHORDS);
           const sure = r && r.score >= MIN_SCORE && r.margin >= MIN_MARGIN;
           $('heard').textContent = r ? `${r.chord} ${Math.round(r.score * 100)}%${sure ? '' : '?'}` : '–';
           earVote(sure ? r.chord : null);
         }, 100);
-      } catch (e) {
+      })().catch(e => {
+        ear = null;  // can be tried again
         $('micStart').disabled = false;
         $('heard').textContent = window.isSecureContext ? `mic error: ${e.message}` : 'mic needs http://localhost (use open.sh)';
-      }
-    };
+        throw e;
+      });
+    }
+    $('micStart').onclick = () => startEar().catch(() => {});
 
     // ---------- setup: debug, string test, calibration ----------
     $('debugMode').onchange = async e => {
@@ -416,6 +448,7 @@
     selectedPattern = patterns[0]; pressOnly($('patterns'), selectedPattern);
 
     ({ chords: CHORDS } = await api('GET', '/chords'));
+    lane.shapes = CHORDS; lane.draw();
     const none = document.createElement('button');
     none.textContent = 'All'; none.dataset.value = ''; none.title = 'Every string';
     none.onclick = () => setChord('');
@@ -431,12 +464,12 @@
 
     // ---------- voice (parsing in voice.js, ElevenLabs calls in eleven.js) ----------
     // The key lives in the board's secrets (see secrets.example.env); the page never asks for it or stores it.
-    try { secret = (await api('GET', '/config')).voice || secret; } catch {}
+    try { const cfg = await api('GET', '/config'); secret = cfg.voice || secret; gemini = cfg.gemini || gemini; } catch {}
     const voiceId = secret.voice_id || DEFAULT_VOICE;
     const chordNames = () => Object.keys(CHORDS);
     const speaker = new Speaker(), mic = new VoiceMic();
     const did = (text, bad = false) => { $('voiceDid').textContent = text; $('voiceDid').classList.toggle('err', bad); };
-    let holding = false, busy = false, explainTimer = null;
+    let holding = false, busy = false, explainTimer = null, knobTalk = null;
 
     $('talk').disabled = !secret.enabled;
     $('voiceState').textContent = secret.enabled ? '' : 'typed only';
@@ -466,11 +499,147 @@
       return bpm;
     }
 
+    // ---------- lessons (logic and drawing in lesson.js, song look-up in gemini.js) ----------
+    const LESSON_BPM = 60;  // slow enough to change chords; the knob overrides it when plugged in
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    for (const l of LESSONS) $('lessonSong').append(new Option(l.name, l.name));
+
+    // Loads the chords as the board's song, counts in for `leadMs`, then has the robot strum
+    // them once through. Returns '' when the lesson is on its way, else why it isn't.
+    async function startLesson({ title, chords }, leadMs = 4000) {
+      endLesson();
+      stopSim();
+      if (playing) {  // a lesson starts from silence, with a count-in
+        await api('POST', '/stop');
+        for (let i = 0; i < 30 && playing; i++) { await sleep(100); await refresh(); }
+      }
+      let note = '';
+      try { await startEar(); } catch { note = 'The microphone is off, so the chords can’t be marked.'; }
+      const r = await api('POST', '/song', { chords: chords.join(',') });
+      if (!r.ok) return `I couldn't load that: ${r.error || 'the board needs the updated app'}.`;
+      sentChord = null; await api('POST', '/chord', { name: '' });  // a chosen chord would override the song
+      if (!knobOn()) await setTempo(LESSON_BPM);
+      await refresh();
+      const bpm = bpmNow();
+      if (!bpm) { await api('POST', '/song', { chords: '' }); return 'The knob is at zero. Turn it up, then ask again.'; }
+      const barMs = 4 * 60000 / bpm;
+      const mine = lesson = new Lesson({ title, chords, barMs, startAt: performance.now() + Math.max(leadMs, barMs) });
+      lessonEar = earShapes(chords, CHORDS);
+      twin.shape = CHORDS[chords[0]];  // fingers ready on the first chord
+      $('lessonTitle').textContent = title; $('lessonScore').textContent = ''; $('lessonStop').hidden = false;
+      say(note);
+      lane.show(lesson);
+      lessonTimers.push(setTimeout(async () => {
+        if (lesson !== mine) return;
+        const pattern = patterns.includes('Strum') ? 'Strum' : patterns[0];
+        selectedPattern = pattern; pressOnly($('patterns'), pattern);
+        const p = await api('POST', '/play', { pattern });
+        if (lesson !== mine) return;
+        if (!p.ok) { endLesson(); return say(`The lesson couldn't start: ${p.error}`); }
+        mine.playing = true;
+        refresh();
+      }, mine.startAt - performance.now() - 120));
+      return '';
+    }
+
+    // The robot started a bar of the lesson's song at page time `at`.
+    function lessonBar(bar, at, len) {
+      const no = bar.no ?? (lesson.seen || 0);  // an older board app doesn't number its bars
+      lesson.seen = no + 1;
+      if (no >= lesson.chords.length) return finishLesson();  // the song came round again
+      lesson.onBar(no, at, len);
+      if (no === lesson.chords.length - 1) lessonTimers.push(setTimeout(finishLesson, at + len - 100 - performance.now()));
+    }
+
+    // What the microphone hears goes to the bar being played (chroma, or null when too quiet).
+    function lessonHear(heard) {
+      const r = heard && matchChord(heard, lessonEar);
+      const name = r && r.score >= LESSON_SCORE ? r.chord : null;
+      $('heard').textContent = name || (heard ? '–' : 'too quiet');
+      lesson.hear(performance.now(), name);
+      lesson.settle(performance.now());
+    }
+
+    function lessonCleanUp() {
+      for (const t of lessonTimers) clearTimeout(t);
+      lessonTimers = [];
+      $('lessonStop').hidden = true;
+      api('POST', '/stop').then(() => api('POST', '/song', { chords: '' })).then(refresh).catch(() => {});
+    }
+
+    // The last bar is over: show every bar in its colour and say the score.
+    function finishLesson() {
+      if (!lessonOn()) return;
+      lesson.finish(performance.now());
+      lessonCleanUp();
+      lane.draw();
+      const { hits, total } = lesson.score();
+      const text = `You got ${hits} of ${total} chords.${hits === total ? ' Perfect!' : hits >= total * 0.7 ? ' Nice work.' : ' Try it again.'}`;
+      $('lessonScore').textContent = `${hits} / ${total}`;
+      did(text);
+      if ($('speakReplies').checked) speak(text);
+    }
+
+    // Give up on the lesson (Stop, a new lesson, the knob at 0): no score.
+    function endLesson() {
+      if (!lesson) return;
+      if (lessonOn()) lessonCleanUp();
+      lesson = null;
+      lane.show(null);
+      $('lessonTitle').textContent = 'play each chord as it reaches the line';
+      $('lessonScore').textContent = '';
+    }
+
+    // A song the page doesn't carry: ask Gemini once, then keep the answer in this browser so
+    // it is the same (and instant) next time.
+    async function lookUpSong(query) {
+      const id = `lesson:${query}`;
+      try { const saved = JSON.parse(localStorage.getItem(id)); if (saved) return saved; } catch {}
+      if (!gemini.enabled) return null;
+      did(`Looking up ${query}…`);
+      const found = await songChords(gemini.key, gemini.model, query, chordNames());
+      const chords = found && cleanProgression(found.chords, chordNames());
+      if (!chords) return null;
+      const song = { name: found.title, chords };
+      try { localStorage.setItem(id, JSON.stringify(song)); } catch {}
+      return song;
+    }
+
+    async function teach(cmd) {
+      let song = cmd.song ? LESSONS.find(l => l.name === cmd.song) : null;
+      if (cmd.query) {
+        song = await lookUpSong(cmd.query);
+        if (!song) {
+          return gemini.enabled ? `I couldn't find chords I can play for ${cmd.query}. Try Riptide, or say random chords.`
+            : `I only know ${LESSONS.map(l => l.name).join(', ')}. Add a Gemini key on the board to learn other songs.`;
+        }
+      }
+      const title = song ? song.name : 'Random chords', chords = song ? song.chords : randomChords(8);
+      const spoken = secret.enabled && $('speakReplies').checked;
+      const error = await startLesson({ title, chords }, spoken ? 7000 : 4000);  // time for the reply to be said
+      if (error) return error;
+      const used = [...new Set(chords)].map(spokenChord).join(', ');
+      return `Sure. ${song ? `Let's learn ${title}` : 'Here are some basic chords'}. It uses ${used}. Start on ${spokenChord(chords[0])}.`;
+    }
+
+    const lessonButton = cmd => async () => {
+      try {
+        const reply = await runCommand(cmd);
+        did(reply);
+        if ($('speakReplies').checked) speak(reply);
+      } catch (e) { did(e.message, true); }
+    };
+    $('lessonRandom').onclick = lessonButton({ action: 'teach', random: true });
+    $('lessonStart').onclick = () => lessonButton({ action: 'teach', song: $('lessonSong').value })();
+    $('lessonStop').onclick = () => { endLesson(); did('Lesson ended.'); };
+
     // Carries out a parsed command (see parseCommand) and returns the reply to show and speak.
     async function runCommand(cmd) {
       switch (cmd.action) {
+        case 'teach':
+          return teach(cmd);
         case 'stop':
-          stopSim(); await api('POST', '/stop');
+          stopSim(); endLesson(); await api('POST', '/stop');
           return 'Stopping.';
         case 'play': {
           const tempo = cmd.bpm && !knobOn() ? ` at ${await setTempo(cmd.bpm)}` : '';
@@ -512,7 +681,7 @@
           return c ? `That's ${spokenChord(c)}.` : "I can't tell yet. Start chord by ear first.";
         }
         case 'help':
-          return 'Try: play Travis picking. Stop. Faster. Tempo ninety. Chord A minor. How do I play F. Or twelve bar blues.';
+          return 'Try: play Travis picking. Stop. Faster. Tempo ninety. Chord A minor. How do I play F. Teach me Riptide. Or random chords.';
       }
       return "I don't know how to do that.";
     }
@@ -520,7 +689,7 @@
     // Text (heard or typed) -> command -> action -> reply shown and spoken.
     async function act(text) {
       $('voiceHeard').textContent = text || '(nothing)';
-      const cmd = parseCommand(text, { patterns, chords: chordNames() });
+      const cmd = parseCommand(text, { patterns, chords: chordNames(), lessons: LESSONS });
       if (!cmd) return did(text ? 'Not a command I know. Say “help” for examples.' : 'Yes?');
       const reply = await runCommand(cmd);
       did(reply);
@@ -533,7 +702,8 @@
       e.target.value = '';
     };
 
-    // Hold to talk: the button, or the space bar anywhere outside a text box.
+    // Hold to talk: the button, or the space bar anywhere outside a text box. Or press the
+    // knob once (knobPressed below): no need to hold, it stops when you go quiet.
     async function talkStart() {
       if (holding || !secret.enabled) return;
       holding = true;
@@ -546,25 +716,54 @@
     async function talkEnd() {
       if (!holding) return;
       holding = false;
+      clearInterval(knobTalk); knobTalk = null;
       $('talk').classList.remove('live'); $('talk').textContent = 'Hold to talk';
       const clip = await mic.stop();
       if (!clip || clip.ms < 300 || busy) return;
       busy = true;
       try {
         $('voiceHeard').textContent = '…';
-        await act(await transcribe(secret.key, clip.blob, keyterms(patterns, chordNames())));
+        await act(await transcribe(secret.key, clip.blob, keyterms(patterns, chordNames(), LESSONS.map(l => l.name))));
       } catch (e) { did(e.message, true); }
       finally { busy = false; }
     }
     $('talk').onpointerdown = e => { e.preventDefault(); $('talk').setPointerCapture(e.pointerId); talkStart(); };
     $('talk').onpointerup = talkEnd; $('talk').onpointercancel = talkEnd;
+    // The knob's button (the board counts presses in /status "talk"): starts listening, and ends
+    // 0.9 s after you stop speaking, after 4 s of nothing, at 8 s whatever happens (the guitar
+    // may be ringing), or on a second press.
+    function beep() {  // "go ahead": the person at the knob isn't looking at the page
+      try {
+        const ctx = twin.audio(), osc = ctx.createOscillator(), gain = ctx.createGain();
+        osc.frequency.value = 880; gain.gain.value = 0.08;
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(); osc.stop(ctx.currentTime + 0.09);
+      } catch {}
+    }
+    async function knobPressed() {
+      if (holding) return talkEnd();
+      if (!secret.enabled) return did('The knob was pressed, but speech is off: add ELEVENLABS_API_KEY to the board’s secrets.env.', true);
+      await talkStart();
+      if (!holding) return;
+      beep();
+      const t0 = performance.now();
+      let peak = 0, spoke = false, quietAt = 0;
+      knobTalk = setInterval(() => {
+        const now = performance.now(), v = mic.level();
+        peak = Math.max(peak, v);
+        if (v > Math.max(0.02, peak * 0.3)) { spoke = true; quietAt = 0; }
+        else if (!quietAt) quietAt = now;
+        if (now - t0 > 8000 || (spoke ? quietAt && now - quietAt > 900 : now - t0 > 4000)) talkEnd();
+      }, 50);
+    }
     const typing = e => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
     addEventListener('keydown', e => { if (e.code === 'Space' && !typing(e)) { e.preventDefault(); if (!e.repeat) talkStart(); } });
     addEventListener('keyup', e => { if (e.code === 'Space' && !typing(e)) { e.preventDefault(); talkEnd(); } });
     setInterval(() => { if (mic.stream) $('voiceLevel').value = mic.level(); }, 50);
 
     // poll fast while the robot plays, so the mirror catches each bar's first beat
-    (async function poll() { await refresh(); setTimeout(poll, playing ? 100 : 1000); })();
+    // (and often enough while idle that a press of the knob's button is answered quickly)
+    (async function poll() { await refresh(); setTimeout(poll, playing || lessonOn() ? 100 : 400); })();
   </script>
 </body>
 </html>

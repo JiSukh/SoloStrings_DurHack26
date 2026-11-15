@@ -29,10 +29,14 @@ class FakeBridge:
     def __init__(self, knob=18):
         self.calls = []
         self.knob = knob
+        self.click = 0  # set to 1 / -1 for one knob gesture; reported once, like the sketch
 
     def call(self, name, *args, **kw):
         self.calls.append(name)
-        return self.knob if name == "knob" else (0 if name == "knob_click" else True)
+        if name == "knob_click":
+            click, self.click = self.click, 0
+            return click
+        return self.knob if name == "knob" else True
 
 
 class FakeMCU(FakeBridge):
@@ -126,7 +130,7 @@ class PlayerTest(unittest.TestCase):
         self.assertTrue(self.player.play("Strum")["ok"])
         self.assertTrue(wait_for(lambda: self.bars), "no bar reported")
         bar = self.bars[0]
-        self.assertEqual(set(bar), {"start", "steps", "chord", "next"})
+        self.assertEqual(set(bar), {"start", "steps", "chord", "next", "no"})
         self.assertEqual(self.states[0]["playing"], "Strum")
         self.assertEqual(self.player.state["knob_bpm"], 90)
         self.player.stop_playing()
@@ -199,17 +203,30 @@ class SequencerTest(unittest.TestCase):
         self.assertLess(self.mcu.calls.index("queue"), self.mcu.calls.index("start"))
         self.assertEqual(self.player.state["knob_bpm"], 90)
 
-    def test_knob_press_switches_pattern_at_the_bar(self):
+    def test_knob_double_tap_switches_pattern_at_the_bar(self):
         p = self.make(bar_s=0.3)
         p.play("Strum")
         self.assertTrue(wait_for(lambda: self.bars))
         n = len(self.mcu.queued)
-        self.mcu.gesture(1)
+        self.mcu.gesture(-1)
         self.assertTrue(wait_for(lambda: len(self.mcu.queued) > n))  # re-queued at once
         self.assertEqual(p.state["playing"], "Down-up eighths")
         self.assertEqual(self.mcu.queued[-1], encode_bar(PATTERNS["Down-up eighths"]))
-        self.mcu.gesture(-1)  # double tap: back
-        self.assertTrue(wait_for(lambda: p.state["playing"] == "Strum"))
+
+    def test_knob_press_asks_the_page_to_listen(self):
+        p = self.make(bar_s=0.3)
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        self.mcu.gesture(1)
+        self.assertTrue(wait_for(lambda: p.state["talk"] == 1), "press not counted")
+        self.assertEqual(p.state["playing"], "Strum")  # a press no longer changes the pattern
+
+    def test_bars_carry_their_song_bar_number(self):
+        p = self.make()
+        p.set_song("G,C")
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: len(self.bars) >= 3))
+        self.assertEqual([(b["no"], b["chord"]) for b in self.bars[:3]], [(0, "G"), (1, "C"), (2, "G")])
 
     def test_page_changes_requeue_the_waiting_bar(self):
         p = self.make(bar_s=0.5)
@@ -250,8 +267,8 @@ class SequencerTest(unittest.TestCase):
         p.play("Riptide")
         self.assertTrue(wait_for(lambda: len(self.bars) >= 3), "polling didn't see bars")
         self.assertEqual([b["chord"] for b in self.bars[:3]], ["Am", "G", "C"])
-        self.mcu.gesture(1)
-        self.assertTrue(wait_for(lambda: p.state["playing"] != "Riptide"), "polling missed the knob press")
+        self.mcu.gesture(-1)
+        self.assertTrue(wait_for(lambda: p.state["playing"] != "Riptide"), "polling missed the knob double tap")
         self.mcu.knob_stop()
         self.assertTrue(wait_for(lambda: p.state["playing"] is None))
 
@@ -351,6 +368,12 @@ class MainTest(unittest.TestCase):
         bar = next(m for _, k, m in self.pushed if k == "bar")
         self.assertTrue({"start", "steps", "chord", "next", "now"} <= set(bar))
 
+    def test_knob_press_while_idle_is_pushed_as_talk(self):
+        main, before = self.main, self.main.player.state["talk"]
+        self.bridge.click = 1
+        self.assertTrue(wait_for(lambda: any(k == "state" and m["talk"] == before + 1
+                                             for _, k, m in self.pushed), 2), "idle knob press not pushed")
+
     def test_knob_watcher_pushes_when_the_knob_moves(self):
         main = self.main
         self.bridge.knob = 24  # 120 BPM
@@ -381,6 +404,7 @@ class MainTest(unittest.TestCase):
         self.assertTrue(main.set_tempo(100)["ok"])
         self.assertTrue(main.steps("Strum")["ok"])
         self.assertEqual(set(main.config()["voice"]), {"enabled", "key", "voice_id"})
+        self.assertEqual(set(main.config()["gemini"]), {"enabled", "key", "model"})
         self.assertIn("board", main.debug())
         self.assertFalse(main.pluck(7)["ok"])
 

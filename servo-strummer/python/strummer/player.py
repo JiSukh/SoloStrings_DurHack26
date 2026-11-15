@@ -61,8 +61,10 @@ class Player:
         self.on_state = on_state
         self.stop = threading.Event()
         # playing = pattern name; bar = the bar the robot is playing now, so the page can mirror it;
-        # song = a loaded chord progression (one chord per bar), used while no chord is chosen
-        self.state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None, "song": None}
+        # song = a loaded chord progression (one chord per bar), used while no chord is chosen;
+        # talk = times the knob was pressed to talk (the page starts listening when it goes up)
+        self.state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None, "song": None,
+                      "talk": 0}
         self.events = queue.Queue()  # the sequencer loop's inbox: board notifications and page changes
         self.thread = None
         self.song, self.bar_no = None, 0
@@ -82,6 +84,18 @@ class Player:
             self.state["knob_bpm"] = knob
             self.changed()
 
+    def knob_gesture(self, gesture):
+        """The knob's button. 1 = press: the page starts listening for a voice command.
+        -1 = double tap: next pattern (only while playing)."""
+        if gesture == 1:
+            self.state["talk"] += 1
+            print("knob press: talk", flush=True)
+            self.changed()
+        elif gesture == -1 and self.state["playing"]:
+            self.state["playing"] = next_pattern(self.state["playing"])
+            print(f"knob double tap: {self.state['playing']!r}", flush=True)
+            self.changed()
+
     # --- the sequencer loop (SEQUENCER = True) ---
 
     def _make_bar(self):
@@ -93,7 +107,8 @@ class Player:
         events = bar(name)
         chord = bar_chord(name, state["chord"], self.bar_no, self.song)
         # next: the chord of the bar after this one, so the page can call it out in time
-        return {"events": events, "chord": chord, "code": encode_bar(events, chord),
+        # no: which bar of the song this is (it keeps counting past the end; the song loops)
+        return {"events": events, "chord": chord, "code": encode_bar(events, chord), "no": self.bar_no,
                 "next": bar_chord(name, state["chord"], self.bar_no + 1, self.song)}
 
     def _poll(self, seen):
@@ -156,13 +171,12 @@ class Player:
                     if knob is not None:
                         self.set_knob_bpm(bar_bpm)
                     state["bar"] = {"start": time.time(), "chord": current["chord"], "next": current["next"],
+                                    "no": current["no"],
                                     "steps": to_steps(current["events"], bar_bpm, current["chord"])}
                     self.on_bar(state["bar"])
                     self.bar_no += 1
-                elif kind == "knob":  # 1 = press: next, -1 = double tap: back
-                    state["playing"] = next_pattern(state["playing"], ev[1])
-                    print(f"knob {ev[1]:+d}: {state['playing']!r}", flush=True)
-                    self.changed()
+                elif kind == "knob":  # 1 = press: talk, -1 = double tap: next pattern
+                    self.knob_gesture(ev[1])
                 if sim is None and not board.servos:  # debug mode switched on mid-play
                     print("servos off: the board stops, bar time carries on here", flush=True)
                     board.stop_bars()
@@ -200,11 +214,9 @@ class Player:
             while not self.stop.is_set():
                 # Pattern, tempo and chord are re-read every bar, so switching patterns, the knob
                 # and the camera all take effect at the next bar line.
-                gesture = board.knob_click()  # 1 = press: next, -1 = double tap: back
+                gesture = board.knob_click()  # 1 = press: talk, -1 = double tap: next pattern
                 if gesture and not first:  # on the first bar it's a stale press from before Play
-                    state["playing"] = next_pattern(state["playing"], gesture)
-                    print(f"knob {gesture:+d}: {state['playing']!r}", flush=True)
-                    self.changed()
+                    self.knob_gesture(gesture)
                 first = False
                 name = state["playing"]
                 if state["song"] is not song:  # a newly loaded song starts from its first chord
@@ -220,7 +232,7 @@ class Player:
                     break
                 steps = to_steps(bar(name), bpm, chord)
                 # next: the chord of the bar after this one, so the page can call it out in time
-                state["bar"] = {"start": time.time(), "steps": steps, "chord": chord,
+                state["bar"] = {"start": time.time(), "steps": steps, "chord": chord, "no": bar_no - 1,
                                 "next": bar_chord(name, state["chord"], bar_no, song)}
                 self.on_bar(state["bar"])
                 for chunk in to_chunks(steps):

@@ -45,8 +45,9 @@ player = Player(board,
 
 
 def knob_watcher():
-    """While nothing plays, read the knob every 300 ms and push when it moves. The play loop
-    reads it itself while playing; idle_poll never waits for the lock."""
+    """While nothing plays, read the knob every 300 ms and push when it moves or is pressed
+    (a press = talk to the voice coach). The play loop reads it itself while playing; idle_poll
+    and idle_click never wait for the lock."""
     while True:
         time.sleep(KNOB_WATCH_S)
         if player.state["playing"]:
@@ -54,6 +55,8 @@ def knob_watcher():
         ok, knob = board.idle_poll(player.state["chord"])
         if ok:
             player.set_knob_bpm(knob)
+        if knob is not None and not player.state["playing"]:  # a knob is plugged in
+            player.knob_gesture(board.idle_click())
 
 
 # --- routes (same paths and parameters as before the split) ---
@@ -100,7 +103,9 @@ def config():
     from the browser and needs the key; the page is only reachable over the USB port forward
     (localhost), and the key is never typed into or stored by the browser."""
     key = SECRETS.get("ELEVENLABS_API_KEY", "")
-    return {"voice": {"enabled": bool(key), "key": key, "voice_id": SECRETS.get("ELEVENLABS_VOICE_ID", "")}}
+    gemini = SECRETS.get("GEMINI_API_KEY", "")  # optional: chords for songs the page doesn't carry
+    return {"voice": {"enabled": bool(key), "key": key, "voice_id": SECRETS.get("ELEVENLABS_VOICE_ID", "")},
+            "gemini": {"enabled": bool(gemini), "key": gemini, "model": SECRETS.get("GEMINI_MODEL", "")}}
 
 
 def play(pattern: str):
