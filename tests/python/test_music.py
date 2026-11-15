@@ -6,7 +6,7 @@ import unittest
 
 import _path  # noqa: F401
 from strummer.music import (BAR_BEATS, CHORDS, KIND_DOWN, KIND_UP, MAX_BAR_CHARS, MAX_CHUNK, MAX_SONG_BARS,
-                            PATTERNS, RANDOM, SUB_PER_TICK, _voice, bar, bar_chord, chord_strings,
+                            PATTERNS, PROGRESSIONS, RANDOM, SUB_PER_TICK, _voice, bar, bar_chord, chord_strings,
                             chunk_ms, encode_bar, next_pattern, parse_bar, parse_song, simulate, to_chunks, to_steps)
 
 
@@ -82,23 +82,20 @@ class Knob(unittest.TestCase):
 
 class Songs(unittest.TestCase):
     def test_progressions_use_real_chords(self):
-        from strummer.songs import SONGS
-        for s in SONGS:
-            self.assertTrue(s["pattern"] in PATTERNS and all(c in CHORDS for c in s["chords"]), s["id"])
+        for name, prog in PROGRESSIONS.items():
+            self.assertTrue(name in PATTERNS and all(c in CHORDS for c in prog), name)
 
     def test_chosen_chord_beats_the_pattern_s_own(self):
-        riptide = ["Am", "G", "C", "C"]
-        self.assertEqual([bar_chord("Island strum", None, i, riptide) for i in range(5)], ["Am", "G", "C", "C", "Am"])
-        self.assertTrue(bar_chord("Island strum", "D", 1, riptide) == "D" and bar_chord("Strum", None, 3) is None)
-        self.assertIsNone(bar_chord("Island strum", None, 1))  # no song: every string, whatever the pattern
+        self.assertEqual([bar_chord("Riptide", None, i) for i in range(5)], ["Am", "G", "C", "C", "Am"])
+        self.assertTrue(bar_chord("Riptide", "D", 1) == "D" and bar_chord("Strum", None, 3) is None)
 
     def test_loaded_song(self):
         # one chord per bar; beats the pattern's own chords, loses to a chosen chord
         song, err = parse_song("Am, G,C ,C")
         self.assertTrue(song == ["Am", "G", "C", "C"] and err is None)
         self.assertEqual([bar_chord("Strum", None, i, song) for i in range(5)], ["Am", "G", "C", "C", "Am"])
-        self.assertTrue(bar_chord("Island strum", None, 1, ["D", "A"]) == "A" and bar_chord("Strum", "E", 1, song) == "E")
-        self.assertTrue(bar_chord("Island strum", None, 1, None) is None and bar_chord("Island strum", None, 1, []) is None)
+        self.assertTrue(bar_chord("Riptide", None, 1, ["D", "A"]) == "A" and bar_chord("Strum", "E", 1, song) == "E")
+        self.assertTrue(bar_chord("Riptide", None, 1, None) == "G" and bar_chord("Riptide", None, 1, []) == "G")
 
     def test_parse_song_errors(self):
         self.assertEqual(parse_song(""), ([], None))

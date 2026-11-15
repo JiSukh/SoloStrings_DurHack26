@@ -71,8 +71,8 @@ PATTERNS = {
     "Strum": [d(ALL, 1), u(ALL, 1)] * 2,
     "Down-up eighths": [d(ALL, .5), u(ALL, .5)] * 4,
     "Folk (D DU UDU)": [d(ALL, 1), d(ALL, .5), u(ALL, 1), u(ALL, .5), d(ALL, .5), u(ALL, .5)],
-    # the island strum (D, DU, UDU), as in Vance Joy's Riptide (see songs.py)
-    "Island strum": [d(ALL, 1), d(ALL, .5), u(ALL, 1), u(ALL, .5), d(ALL, .5), u(ALL, .5)],
+    # Vance Joy's Riptide: the island strum (D, DU, UDU) over its chords, see PROGRESSIONS
+    "Riptide": [d(ALL, 1), d(ALL, .5), u(ALL, 1), u(ALL, .5), d(ALL, .5), u(ALL, .5)],
     "Travis picking": [p([R, 5], .5), p([3], .5), p([R2], .5), p([4], .5),
                        p([R], .5), p([3], .5), p([R2], .5), p([4], .5)],
     "Arpeggio up": [p([s], 1 / 3) for s in ALL] * 2,  # triplets: two runs per bar
@@ -92,15 +92,19 @@ PATTERNS = {
 
 RANDOM = "Random"  # a new made-up bar every bar
 
+# Patterns that come with their song's chords, one per bar, used while no chord is chosen.
+PROGRESSIONS = {"Riptide": ["Am", "G", "C", "C"]}
+
+
 MAX_SONG_BARS = 64
 
 
 def bar_chord(name, chord, bar_no, song=None):
-    """The chord for bar `bar_no`: the chosen one, else the loaded song's (songs.py, or a custom
-    one), else None (every string). `name` (the pattern) no longer matters: songs carry the chords."""
+    """The chord for bar `bar_no`: the chosen one, else the loaded song's, else the pattern's own."""
     if chord:
         return chord
-    return song[bar_no % len(song)] if song else None
+    prog = song or PROGRESSIONS.get(name)
+    return prog[bar_no % len(prog)] if prog else None
 
 
 def parse_song(text):

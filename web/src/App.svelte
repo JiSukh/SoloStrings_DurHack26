@@ -12,9 +12,6 @@
   import Tempo from './lib/components/Tempo.svelte';
   import VirtualGuitar from './lib/components/VirtualGuitar.svelte';
   import { loadBoardKey, setVoice, voiceSettings } from './plugins/voice/settings';
-  import Practice from './components/Practice/Practice.svelte';
-  import Progress from './components/Progress/Progress.svelte';
-  import { practiceRequested } from './lib/practice/session';
 
   type Tab = 'play' | 'practice' | 'progress' | 'setup' | 'voice';
   const TABS: [Tab, string][] = [['play', 'Play'], ['practice', 'Practice'], ['progress', 'Progress'], ['setup', 'Setup'], ['voice', 'Voice']];
@@ -34,8 +31,6 @@
     if (voiceOn && !VoicePanel) import('./plugins/voice/VoicePanel.svelte').then(m => { VoicePanel = m.default; });
   });
   $effect(() => { if (!voiceOn && tab === 'voice') tab = 'setup'; });
-  // the Progress view started a practice loop
-  $effect(() => { if ($practiceRequested) tab = 'practice'; });
 
   let keyInput = $state('');
   $effect(() => { keyInput = $voiceSettings.key || ''; });
@@ -77,11 +72,13 @@
   </section>
 
   <section hidden={tab !== 'practice'}>
-    <Practice />
+    <h2>Practice</h2>
+    <p class="muted">Coming soon: pick a song, play along, and get graded live.</p>
   </section>
 
   <section hidden={tab !== 'progress'}>
-    <Progress visible={tab === 'progress'} />
+    <h2>Progress</h2>
+    <p class="muted">Coming soon: your practice sessions over time.</p>
   </section>
 
   <section hidden={tab !== 'setup'}>

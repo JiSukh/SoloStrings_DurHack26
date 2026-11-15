@@ -137,7 +137,7 @@ class PlayerTest(unittest.TestCase):
     def test_switching_and_settings_report_state(self):
         self.player.play("Strum")
         n = len(self.states)
-        self.assertTrue(self.player.play("Island strum")["switched"])
+        self.assertTrue(self.player.play("Riptide")["switched"])
         self.assertTrue(self.player.set_chord("Am")["ok"])
         self.assertTrue(self.player.set_tempo(500)["ok"])
         self.assertTrue(self.player.set_song("Am,G")["ok"])
@@ -159,9 +159,9 @@ class PlayerTest(unittest.TestCase):
         self.assertEqual(self.bars, [])
 
     def test_steps_for_the_virtual_guitar(self):
-        r = self.player.set_song("Am,G,C,C") and self.player.steps("Island strum", 90, "", 1)
+        r = self.player.steps("Riptide", 90, "", 1)
         self.assertTrue(r["ok"] and r["chord"] == "G" and r["next"] == "C" and r["steps"])
-        self.assertFalse(self.player.steps("Island strum", 90, "H")["ok"])
+        self.assertFalse(self.player.steps("Riptide", 90, "H")["ok"])
 
     def test_idle_poll_never_blocks(self):
         self.assertEqual(self.board.idle_poll("C"), (True, 90))
@@ -188,15 +188,14 @@ class SequencerTest(unittest.TestCase):
     def test_riptide_changes_chord_on_every_bar(self):
         p = self.make()
         self.assertFalse(p.polling)
-        p.set_song("Am,G,C,C")  # Riptide, as songs.py has it
-        self.assertTrue(p.play("Island strum")["ok"])
+        self.assertTrue(p.play("Riptide")["ok"])
         self.assertTrue(wait_for(lambda: len(self.bars) >= 5), "bars didn't arrive")
         self.assertEqual([b["chord"] for b in self.bars[:5]], ["Am", "G", "C", "C", "Am"])
         self.assertEqual([b["next"] for b in self.bars[:4]], ["G", "C", "C", "Am"])
         self.assertEqual(self.mcu.shown[:4], ["Am", "G", "C", "Am"])  # the LED follows the bar (C, C sent once)
         # one bar queued ahead: the first before start, then one per bar notification
-        self.assertEqual(self.mcu.queued[0], encode_bar(PATTERNS["Island strum"], "Am"))
-        self.assertEqual(self.mcu.queued[1], encode_bar(PATTERNS["Island strum"], "G"))
+        self.assertEqual(self.mcu.queued[0], encode_bar(PATTERNS["Riptide"], "Am"))
+        self.assertEqual(self.mcu.queued[1], encode_bar(PATTERNS["Riptide"], "G"))
         self.assertLess(self.mcu.calls.index("queue"), self.mcu.calls.index("start"))
         self.assertEqual(self.player.state["knob_bpm"], 90)
 
@@ -248,12 +247,11 @@ class SequencerTest(unittest.TestCase):
     def test_polls_when_the_bridge_cannot_provide(self):
         p = self.make(provide_ok=False)
         self.assertTrue(p.polling)
-        p.set_song("Am,G,C,C")
-        p.play("Island strum")
+        p.play("Riptide")
         self.assertTrue(wait_for(lambda: len(self.bars) >= 3), "polling didn't see bars")
         self.assertEqual([b["chord"] for b in self.bars[:3]], ["Am", "G", "C"])
         self.mcu.gesture(1)
-        self.assertTrue(wait_for(lambda: p.state["playing"] != "Island strum"), "polling missed the knob press")
+        self.assertTrue(wait_for(lambda: p.state["playing"] != "Riptide"), "polling missed the knob press")
         self.mcu.knob_stop()
         self.assertTrue(wait_for(lambda: p.state["playing"] is None))
 
@@ -373,21 +371,6 @@ class MainTest(unittest.TestCase):
         self.assertEqual(main.reset()["error"], "stop the pattern first")
         main.stop_playing()
         self.assertTrue(wait_for(lambda: main.player.state["playing"] is None))
-
-    def test_songs_sessions_progress(self):
-        main = self.main
-        songs = {s["id"]: s for s in main.songs()["songs"]}
-        self.assertEqual(songs["riptide"]["chords"], ["Am", "G", "C", "C"])
-        self.assertEqual(songs["riptide"]["pattern"], "Island strum")
-        self.assertEqual(len(songs["blues-a"]["chords"]), 12)
-        r = main.save_session("riptide", 100, "Am:hit,G:hit,C:late,C:miss")
-        self.assertTrue(r["ok"])
-        self.assertEqual(r["session"]["score"], 63)  # 2.5 / 4
-        self.assertTrue(main.save_session("loop:Am-G", 80, "Am:hit,G:hit")["ok"])  # a 2-chord practice loop
-        self.assertFalse(main.save_session("nope", 100, "Am:hit")["ok"])
-        self.assertFalse(main.save_session("riptide", 100, "Am:great")["ok"])
-        self.assertFalse(main.save_session("riptide", 100, "")["ok"])
-        self.assertEqual(main.progress()["songs"]["riptide"]["last"], 63)
 
     def test_routes_answer_as_before(self):
         main = self.main
