@@ -69,7 +69,7 @@ class Player:
         # Notification handlers only queue an event: calling the board back from inside one
         # could deadlock the Bridge.
         heard = [board.listen("bar", lambda n, bpm: self.events.put(("bar", int(n), int(bpm)))),
-                 board.listen("knob", lambda g: self.events.put(("knob", int(g)))),
+                 board.listen("knob_gesture", lambda g: self.events.put(("knob", int(g)))),
                  board.listen("stopped", lambda *_: self.events.put(("stopped",)))]
         self.polling = not all(heard)
 

@@ -11,6 +11,13 @@ import unittest
 
 import _path  # noqa: F401
 from strummer import player as player_mod
+
+# Names the sketch provides; Python can't provide a notification handler under any of them.
+import re
+from pathlib import Path
+_SKETCH = Path(__file__).resolve().parents[2] / "servo-strummer" / "sketch" / "sketch.ino"
+MCU_RPCS = set(re.findall(r'Bridge\.provide\("(\w+)"', _SKETCH.read_text()))
+assert "knob" in MCU_RPCS
 from strummer.board import Board
 from strummer.music import PATTERNS, encode_bar, parse_bar
 from strummer.player import Player
@@ -44,6 +51,8 @@ class FakeMCU(FakeBridge):
     def provide(self, name, fn):
         if not self.provide_ok:
             raise AttributeError("this Bridge can't provide")
+        if name in MCU_RPCS:  # the router refuses a name the sketch already provides
+            raise ValueError(f"Method {name!r} is already provided by another client.")
         self.handlers[name] = fn
 
     def _emit(self, name, *args):
@@ -59,7 +68,7 @@ class FakeMCU(FakeBridge):
     def gesture(self, g):
         self.gestures += 1
         self.last_gesture = g
-        self._emit("knob", g)
+        self._emit("knob_gesture", g)
 
     def knob_stop(self):  # knob turned to 0: the MCU stops at the beat and says so
         self.running = False

@@ -426,7 +426,7 @@ void loop() {
       if (g) {
         lastGesture = g;
         gestureCount++;
-        Bridge.notify("knob", g);
+        Bridge.notify("knob_gesture", g);  // not "knob": that name is the RPC above
       }
     }
   }
