@@ -249,7 +249,7 @@
   </div>
 
   <script type="module">
-    import { chroma, matchChord, FMIN, FMAX } from './listen.js';
+    import { chroma, matchChord, likeness, FMIN, FMAX } from './listen.js';
     import { VirtualGuitar, barLength } from './twin.js';
     import { parseCommand, spokenChord, chordHelp, keyterms } from './voice.js';
     import { transcribe, tts, Speaker, VoiceMic, DEFAULT_VOICE } from './eleven.js';
@@ -604,11 +604,16 @@
 
     // What the microphone hears (chroma, or null when too quiet) is compared with the one chord
     // wanted right now; the bar keeps how alike they were, and lesson.js decides green or red.
+    // The sound is also compared with just the strings plucked so far this bar: in fingerstyle
+    // the whole chord only rings late in the bar, and its tile should go green on the first notes.
     function lessonHear(heard) {
       const now = performance.now(), chord = lesson.chordAt(now);
       const r = heard && chord ? matchChord(heard, { [chord]: CHORDS[chord] }) : null;
-      $('heard').textContent = !heard ? 'too quiet' : r ? `${chord} ${Math.round(r.score * 100)}%` : '–';
-      const won = lesson.hear(now, r ? r.score : null);
+      let score = r ? r.score : null;
+      const plucked = score === null ? [] : lesson.pluckedAt(now);
+      if (plucked.length) score = Math.max(score, likeness(heard, CHORDS[chord], plucked));
+      $('heard').textContent = !heard ? 'too quiet' : score !== null ? `${chord} ${Math.round(score * 100)}%` : '–';
+      const won = lesson.hear(now, score);
       if (won >= 0) fx.hit(lesson.chords[won], lesson.streak().now);  // the lane pulses; this is the bell
       if (lesson.settle(now).length) fx.miss();
     }

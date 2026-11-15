@@ -105,6 +105,16 @@ export class Lesson {
     return i < 0 ? null : this.chords[i];
   }
 
+  // The strings the robot has plucked so far in the bar being played at t (from its tab), low
+  // E = 0. Picked one at a time, the whole chord isn't ringing until late in the bar, so the
+  // page compares the sound with just these and the bar can be won on its first notes.
+  pluckedAt(t) {
+    const i = this.barAt(t), tab = i < 0 ? null : this.tabs[this.chords[i]];
+    if (!tab) return [];
+    const f = (t - this.barStart(i)) / this.barMs;
+    return [...new Set(tab.filter(ev => ev.f <= f).flatMap(ev => ev.strings))].sort((a, b) => a - b);
+  }
+
   // At time t the sound was `score` like the chord wanted then (null: too quiet to tell).
   // Returns the bar's number if this is the reading that won it, else -1.
   hear(t, score) {

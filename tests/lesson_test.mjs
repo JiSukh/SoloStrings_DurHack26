@@ -1,7 +1,7 @@
 // lesson.js: the songs, the random warm-up, bar timing and the green/red verdicts; and the
 // "teach me ..." voice commands that start a lesson. Uses the real chord names from music.py.
 import { BASIC, LESSONS, MAX_LESSON_BARS, PASS_SCORE, randomChords, gradeBar, tabOf, Lesson } from '../servo-strummer/assets/lesson.js';
-import { matchChord, template } from '../servo-strummer/assets/listen.js';
+import { matchChord, template, likeness as pickedLikeness } from '../servo-strummer/assets/listen.js';
 import { chimeNotes } from '../servo-strummer/assets/fx.js';
 import { parseCommand, normalise } from '../servo-strummer/assets/voice.js';
 import { readFileSync } from 'node:fs';
@@ -87,6 +87,20 @@ l.onBar(1, 7300, 2000);
 assert.equal(l.barStart(2), 9300);
 l.onBar(7, 1, 1);  // a bar past the end changes nothing
 assert.equal(l.endAt, 11300);
+
+// fingerstyle: the strings plucked so far in the bar, so its first notes can already win it
+const picked = new Lesson({ title: 't', chords: ['C', 'G'], barMs: 1000, startAt: 0,
+  tabs: { C: [{ f: 0, strings: [1] }, { f: 0.25, strings: [3] }, { f: 0.5, strings: [2] }, { f: 0.75, strings: [3, 4] }] } });
+assert.deepEqual(picked.pluckedAt(-5), [], 'before the first bar');
+assert.deepEqual(picked.pluckedAt(10), [1]);
+assert.deepEqual(picked.pluckedAt(600), [1, 2, 3]);
+assert.deepEqual(picked.pluckedAt(990), [1, 2, 3, 4]);
+assert.deepEqual(picked.pluckedAt(1500), [], 'a chord with no tab');
+// one right note sounds like the chord's plucked strings at once, though not yet like the whole chord
+const oneNote = template(CHORDS.C, [1]);
+assert.ok(pickedLikeness(oneNote, CHORDS.C, [1]) > 0.99);
+assert.ok(matchChord(oneNote, { C: CHORDS.C }).score < PASS_SCORE, 'a single note is not the whole chord');
+assert.ok(pickedLikeness(template(CHORDS.G, [1]), CHORDS.C, [1]) < PASS_SCORE, 'the wrong fret on that string does not pass');
 
 // hearing: each reading goes to the bar being played; verdicts come at the bar's end
 assert.equal(l.chordAt(5100), null, 'before the first bar');

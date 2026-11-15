@@ -47,6 +47,12 @@ function cosine(a, b) {
   return aa && bb ? ab / Math.sqrt(aa * bb) : 0;
 }
 
+// How like a chroma is to `shape` played on just `strings` (0..1). For fingerstyle, where
+// only a few of the chord's strings have been plucked so far.
+export function likeness(c, shape, strings) {
+  return cosine(c, template(shape, strings));
+}
+
 // Best chord for a chroma among { name: shape }. The robot may only be strumming the
 // current chord's strings, so each chord is also tried as just its top four strings.
 // Returns { chord, score, margin } (margin = lead over the runner-up chord), or null.
