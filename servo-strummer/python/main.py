@@ -4,15 +4,16 @@ import time
 from arduino.app_utils import App, Bridge
 from arduino.app_bricks.web_ui import WebUI
 
-from patterns import CHORDS, PATTERNS, RANDOM, bar, bar_chord, next_pattern, to_steps, to_chunks, chunk_ms
+from patterns import CHORDS, PATTERNS, RANDOM, bar, bar_chord, next_pattern, parse_song, to_steps, to_chunks, chunk_ms
 
 KNOB_BPM_STEP = 5  # each knob click = 5 BPM; the sketch keeps the knob within 0..40 (0..200 BPM)
 
 ui = WebUI()
 lock = threading.Lock()  # one conversation with the board at a time
 stop = threading.Event()
-# playing = pattern name; bar = the bar the robot is playing now, so the page can mirror it
-state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None}
+# playing = pattern name; bar = the bar the robot is playing now, so the page can mirror it;
+# song = a loaded chord progression (one chord per bar), used while no chord is chosen
+state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None, "song": None}
 shown_chord = "?"  # chord on the board's LED matrix; "?" = nothing sent yet
 
 
@@ -35,6 +36,7 @@ def _play():
         print(f"play start: {state['playing']!r}", flush=True)
         first = True
         bar_no = 0
+        song = state["song"]
         while not stop.is_set():
             # Pattern, tempo and chord are re-read every bar, so switching patterns, the knob
             # and the camera all take effect at the next bar line.
@@ -44,7 +46,9 @@ def _play():
                 print(f"knob {gesture:+d}: {state['playing']!r}", flush=True)
             first = False
             name = state["playing"]
-            chord = bar_chord(name, state["chord"], bar_no)
+            if state["song"] is not song:  # a newly loaded song starts from its first chord
+                song, bar_no = state["song"], 0
+            chord = bar_chord(name, state["chord"], bar_no, song)
             bar_no += 1
             _show_chord(chord)
             knob = _knob_bpm()
@@ -54,7 +58,9 @@ def _play():
                 print("knob at 0: stopping", flush=True)
                 break
             steps = to_steps(bar(name), bpm, chord)
-            state["bar"] = {"start": time.time(), "steps": steps, "chord": chord}
+            # next: the chord of the bar after this one, so the page can call it out in time
+            state["bar"] = {"start": time.time(), "steps": steps, "chord": chord,
+                            "next": bar_chord(name, state["chord"], bar_no, song)}
             for chunk in to_chunks(steps):
                 if stop.is_set():
                     break
@@ -111,6 +117,16 @@ def set_chord(name: str = ""):
     return {"ok": True}
 
 
+def set_song(chords: str = ""):
+    # "Am,G,C,C": one chord per bar, looping. Empty = no song. It plays while no chord is
+    # chosen; a chord from the page, camera or microphone still wins, bar by bar.
+    names, error = parse_song(chords)
+    if error:
+        return {"ok": False, "error": error}
+    state["song"] = names or None
+    return {"ok": True, "song": state["song"]}
+
+
 def set_tempo(bpm: int):
     # Used when no knob is plugged in.
     state["bpm"] = min(max(bpm, 30), 200)
@@ -136,8 +152,10 @@ def steps(pattern: str, bpm: int = 90, chord: str = "", bar_no: int = 0):
         return {"ok": False, "error": "unknown pattern"}
     if chord and chord not in CHORDS:
         return {"ok": False, "error": "unknown chord"}
-    chord = bar_chord(pattern, chord or None, bar_no)
-    return {"ok": True, "chord": chord, "steps": to_steps(bar(pattern), min(max(bpm, 30), 200), chord)}
+    chosen, song = chord or None, state["song"]
+    chord = bar_chord(pattern, chosen, bar_no, song)
+    return {"ok": True, "chord": chord, "next": bar_chord(pattern, chosen, bar_no + 1, song),
+            "steps": to_steps(bar(pattern), min(max(bpm, 30), 200), chord)}
 
 
 def debug():
@@ -156,6 +174,7 @@ ui.expose_api("POST", "/play", play)
 ui.expose_api("POST", "/stop", stop_playing)
 ui.expose_api("POST", "/chord", set_chord)
 ui.expose_api("POST", "/tempo", set_tempo)
+ui.expose_api("POST", "/song", set_song)
 ui.expose_api("GET", "/status", status)
 ui.expose_api("GET", "/debug", debug)
 ui.expose_api("GET", "/steps", steps)

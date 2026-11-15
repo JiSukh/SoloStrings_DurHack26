@@ -96,12 +96,27 @@ RANDOM = "Random"  # a new made-up bar every bar
 PROGRESSIONS = {"Riptide": ["Am", "G", "C", "C"]}
 
 
-def bar_chord(name, chord, bar_no):
-    """The chord for bar `bar_no` of pattern `name`: the chosen one, else the song's own."""
-    if chord or name not in PROGRESSIONS:
+MAX_SONG_BARS = 64
+
+
+def bar_chord(name, chord, bar_no, song=None):
+    """The chord for bar `bar_no`: the chosen one, else the loaded song's, else the pattern's own."""
+    if chord:
         return chord
-    prog = PROGRESSIONS[name]
-    return prog[bar_no % len(prog)]
+    prog = song or PROGRESSIONS.get(name)
+    return prog[bar_no % len(prog)] if prog else None
+
+
+def parse_song(text):
+    """"Am, G, C, C" -> (["Am", "G", "C", "C"], None), one chord per bar; ([], None) for an
+    empty string; (None, error) if a chord isn't in CHORDS or the song is too long."""
+    names = [c.strip() for c in (text or "").split(",") if c.strip()]
+    unknown = [c for c in names if c not in CHORDS]
+    if unknown:
+        return None, "unknown chord: " + ", ".join(unknown)
+    if len(names) > MAX_SONG_BARS:
+        return None, f"too long: {MAX_SONG_BARS} bars at most"
+    return names, None
 
 
 def random_bar(rng=random):
