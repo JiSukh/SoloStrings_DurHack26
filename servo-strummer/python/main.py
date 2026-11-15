@@ -1,3 +1,4 @@
+import json
 import threading
 import time
 from pathlib import Path
@@ -19,11 +20,30 @@ stop = threading.Event()
 state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None, "song": None}
 shown_chord = "?"  # chord on the board's LED matrix; "?" = nothing sent yet
 
+# Pick end angles per string, [side A, side B], set from the page and kept across restarts.
+ANGLES_FILE = Path(__file__).with_name("angles.json")
+try:
+    state["angles"] = json.loads(ANGLES_FILE.read_text())
+except (OSError, ValueError):
+    state["angles"] = [[60, 120] for _ in range(6)]  # same as the sketch's defaults
+angles_sent = False  # the sketch starts with its defaults; send ours once it's up
+
 
 def _knob_bpm():
     """Tempo from the knob, or None when no knob is plugged in. Caller must hold `lock`."""
     pos = Bridge.call("knob", timeout=2)
     return pos * KNOB_BPM_STEP if pos >= 0 else None
+
+
+def _send_angles():
+    """Give the board the saved angles, once per app start. Caller must hold `lock`."""
+    # shortcut: a lone MCU reset (brownout) brings back the defaults until the app restarts;
+    # resend whenever stats() shows a fresh uptime if that ever matters.
+    global angles_sent
+    if not angles_sent:
+        for i, (a, b) in enumerate(state["angles"]):
+            Bridge.call("angles", i, a, b, timeout=3)
+        angles_sent = True
 
 
 def _show_chord(chord):
@@ -39,6 +59,7 @@ def _play():
         print(f"play start: {state['playing']!r}", flush=True)
         first = True
         bar_no = 0
+        _send_angles()
         song = state["song"]
         while not stop.is_set():
             # Pattern, tempo and chord are re-read every bar, so switching patterns, the knob
@@ -107,6 +128,53 @@ def play(pattern: str):
     return {"ok": True}
 
 
+def pluck(string: int):
+    """String test: pluck one string (0 = low E .. 5 = high e), or -1 for all six in turn."""
+    if not -1 <= string <= 5:
+        return {"ok": False, "error": "string must be 0-5, or -1 for all"}
+    if not lock.acquire(timeout=0.5):
+        return {"ok": False, "error": "stop the pattern first"}
+    try:
+        _send_angles()
+        strings = range(6) if string == -1 else [string]
+        Bridge.call("play", ",".join(f"{1 << s}:300" for s in strings), timeout=10)
+    finally:
+        lock.release()
+    return {"ok": True}
+
+
+def set_angles(string: int, a: int, b: int):
+    """Calibration: where string's pick rests on each side (degrees, a < b)."""
+    if not 0 <= string <= 5 or not 10 <= a <= b - 10 or b > 170:
+        return {"ok": False, "error": "need string 0-5 and 10 <= a, a + 10 <= b <= 170"}
+    if not lock.acquire(timeout=0.5):
+        return {"ok": False, "error": "stop the pattern first"}
+    try:
+        _send_angles()
+        if not Bridge.call("angles", string, a, b, timeout=3):
+            return {"ok": False, "error": "board refused the angles"}
+        state["angles"][string] = [a, b]
+    finally:
+        lock.release()
+    try:
+        ANGLES_FILE.write_text(json.dumps(state["angles"]))
+    except OSError as e:
+        return {"ok": True, "saved": False, "error": f"not saved: {e}"}
+    return {"ok": True, "saved": True}
+
+
+def reset():
+    """Every pick back to its start side."""
+    if not lock.acquire(timeout=0.5):
+        return {"ok": False, "error": "stop the pattern first"}
+    try:
+        _send_angles()
+        Bridge.call("reset", timeout=5)
+    finally:
+        lock.release()
+    return {"ok": True}
+
+
 def stop_playing():
     stop.set()  # takes effect after the chunk currently on the board finishes
     return {"ok": True}
@@ -142,6 +210,7 @@ def status():
         try:
             state["knob_bpm"] = _knob_bpm()
             _show_chord(state["chord"])
+            _send_angles()
         except Exception:
             pass
         finally:
@@ -180,6 +249,9 @@ ui.expose_api("GET", "/patterns", patterns)
 ui.expose_api("GET", "/chords", chords)
 ui.expose_api("POST", "/play", play)
 ui.expose_api("POST", "/stop", stop_playing)
+ui.expose_api("POST", "/pluck", pluck)
+ui.expose_api("POST", "/reset", reset)
+ui.expose_api("POST", "/angles", set_angles)
 ui.expose_api("POST", "/chord", set_chord)
 ui.expose_api("POST", "/tempo", set_tempo)
 ui.expose_api("POST", "/song", set_song)

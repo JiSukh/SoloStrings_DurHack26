@@ -83,6 +83,10 @@ export class VirtualGuitar {
     }
   }
 
+  reset() {  // picks back to their start side, like the servos
+    this.sideB.fill(false);
+  }
+
   stop() {
     for (const t of this.timers) clearTimeout(t);
     this.timers = [];

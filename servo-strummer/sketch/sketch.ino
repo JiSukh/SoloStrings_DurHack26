@@ -6,8 +6,9 @@ const int SERVO_PINS[] = {2, 4, 7, 8, 12, 13};
 const int N = sizeof(SERVO_PINS) / sizeof(SERVO_PINS[0]);
 // Each pluck swings a string's pick from one side to the other. Angles per string,
 // low E first; tune to where the picks sit. A small swing is fast enough for quick patterns.
-const int SIDE_A[] = {55, 55, 55, 55, 55, 55};
-const int SIDE_B[] = {125, 125, 125, 125, 125, 125};
+// Defaults; the web page's calibration sliders change them per string (see setAngles).
+int SIDE_A[] = {60, 60, 60, 60, 60, 60};
+int SIDE_B[] = {120, 120, 120, 120, 120, 120};
 const int SETTLE_MS = 300;  // time to reach start position at power-up
 
 bool onSideB[N];  // which side each pick is on now
@@ -204,6 +205,22 @@ void drawText(const char* text, int x) {
   matrixWrite(frame);
 }
 
+// Calibration: new end angles for one string's pick. Holds briefly so it moves there now.
+bool setAngles(int i, int a, int b) {
+  if (i < 0 || i >= N || a < 10 || b > 170 || b - a < 10) return false;
+  SIDE_A[i] = a;
+  SIDE_B[i] = b;
+  hold(SETTLE_MS);
+  return true;
+}
+
+// Every pick back to its start side (A), as at power-up.
+bool resetPicks() {
+  for (int i = 0; i < N; i++) onSideB[i] = false;
+  hold(SETTLE_MS);
+  return true;
+}
+
 bool play(String steps) {
   playCount++;
   return playSteps(steps.c_str());
@@ -251,6 +268,8 @@ void setup() {
   Bridge.provide("knob", readKnob);
   Bridge.provide("knob_click", knobClick);
   Bridge.provide("show", show);
+  Bridge.provide("reset", resetPicks);
+  Bridge.provide("angles", setAngles);
 }
 
 // Draws the chord: centred if it fits (C, Am, B7), scrolling if not (Fmaj7, Cadd9).
