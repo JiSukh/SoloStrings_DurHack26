@@ -68,6 +68,14 @@ assert bar_chord("Riptide", None, 1, ["D", "A"]) == "A" and bar_chord("Strum", "
 assert bar_chord("Riptide", None, 1, None) == "G" and bar_chord("Riptide", None, 1, []) == "G"
 assert parse_song("") == ([], None) and parse_song("Am,H")[0] is None and "H" in parse_song("Am,H")[1]
 assert parse_song(",".join(["C"] * (MAX_SONG_BARS + 1)))[0] is None
+# .env reader: comments, quotes and a missing file
+import os, tempfile
+from config import read_env
+with tempfile.TemporaryDirectory() as d:
+    with open(os.path.join(d, ".env"), "w") as f:
+        f.write("# note\nELEVENLABS_API_KEY = 'abc=123'\n\nOTHER=x\nbroken line\n")
+    assert read_env(os.path.join(d, ".env")) == {"ELEVENLABS_API_KEY": "abc=123", "OTHER": "x"}
+    assert read_env(os.path.join(d, "missing")) == {}
 # a down strum plucks low E first, an up strum high e first
 assert to_steps([("d", [0, 1, 2, 3, 4, 5], 1)], 60)[0][0] == 1
 assert to_steps([("u", [0, 1, 2, 3, 4, 5], 1)], 60)[0][0] == 32

@@ -585,7 +585,6 @@
     }, 50);
 
     // Key and voice
-    $('elKey').value = elKey();
     async function loadVoices() {
       if (!elKey()) return;
       try {
@@ -598,7 +597,11 @@
     $('elSave').onclick = () => { el.key = $('elKey').value.trim(); saveEl(); loadVoices(); };
     $('elVoice').onchange = e => { el.voice = e.target.value; saveEl(); speak('Hello. This is my voice.'); };
     $('songClear').onclick = async () => { await api('POST', '/song', { chords: '' }); refresh(); };
-    loadVoices();
+    (async () => {  // a key saved in this browser wins; otherwise take the one in the board's .env
+      if (!elKey()) { try { el.key = (await api('GET', '/config')).elevenlabs_key || ''; } catch {} }
+      $('elKey').value = elKey();
+      loadVoices();
+    })();
 
     // ---------- coach conversation (experimental; agent set-up in coach.js) ----------
     const coachStatus = t => { $('coachStatus').textContent = t; };

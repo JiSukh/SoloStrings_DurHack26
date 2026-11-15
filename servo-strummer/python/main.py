@@ -1,11 +1,14 @@
 import threading
 import time
+from pathlib import Path
 
 from arduino.app_utils import App, Bridge
 from arduino.app_bricks.web_ui import WebUI
 
+from config import read_env
 from patterns import CHORDS, PATTERNS, RANDOM, bar, bar_chord, next_pattern, parse_song, to_steps, to_chunks, chunk_ms
 
+ENV = read_env(Path(__file__).resolve().parent.parent / ".env")  # servo-strummer/.env, not in git
 KNOB_BPM_STEP = 5  # each knob click = 5 BPM; the sketch keeps the knob within 0..40 (0..200 BPM)
 
 ui = WebUI()
@@ -158,6 +161,11 @@ def steps(pattern: str, bpm: int = 90, chord: str = "", bar_no: int = 0):
             "steps": to_steps(bar(pattern), min(max(bpm, 30), 200), chord)}
 
 
+def config():
+    # Settings the page needs from .env. The page is only reachable over the USB port forward.
+    return {"elevenlabs_key": ENV.get("ELEVENLABS_API_KEY", "")}
+
+
 def debug():
     # Only ask the board while nothing is playing: a message mid-pattern could be garbled.
     if not lock.acquire(blocking=False):
@@ -177,6 +185,7 @@ ui.expose_api("POST", "/tempo", set_tempo)
 ui.expose_api("POST", "/song", set_song)
 ui.expose_api("GET", "/status", status)
 ui.expose_api("GET", "/debug", debug)
+ui.expose_api("GET", "/config", config)
 ui.expose_api("GET", "/steps", steps)
 
 App.run()
