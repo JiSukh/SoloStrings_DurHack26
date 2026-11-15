@@ -1,18 +1,22 @@
 // Virtual guitar: a digital twin of the robot. It plays the same steps the board gets
-// ("mask, ms" pairs from patterns.py), drawing each string and pick and synthesising the sound.
+// ("mask, ms" pairs from strummer/music.py), drawing each string and pick and synthesising the
+// sound. (Ported from assets/twin.js.)
+
+export type Step = [mask: number, ms: number];
+export interface BarEvent { t: number; strings: number[] }
 
 export const OPEN_MIDI = [40, 45, 50, 55, 59, 64];  // E2 A2 D3 G3 B3 E4, low E first
 const NAMES = ['E', 'A', 'D', 'G', 'B', 'e'];
 
 // Pitch of string s with the left hand holding `shape` ("x32010"); open strings with no chord.
-export function noteMidi(shape, s) {
+export function noteMidi(shape: string | null, s: number): number | null {
   const fret = shape ? shape[s] : '0';
   return fret === 'x' ? null : OPEN_MIDI[s] + Number(fret);
 }
 
 // Steps -> [{ t: ms from bar start, strings: [...] }], one entry per pluck (mask 0 = rest).
-export function barEvents(steps) {
-  const out = [];
+export function barEvents(steps: Step[]): BarEvent[] {
+  const out: BarEvent[] = [];
   let t = 0;
   for (const [mask, ms] of steps) {
     if (mask) out.push({ t, strings: [0, 1, 2, 3, 4, 5].filter(s => mask & (1 << s)) });
@@ -21,11 +25,11 @@ export function barEvents(steps) {
   return out;
 }
 
-export const barLength = steps => steps.reduce((sum, [, ms]) => sum + ms, 0);
+export const barLength = (steps: Step[]) => steps.reduce((sum, [, ms]) => sum + ms, 0);
 
 // Karplus-Strong: a noise burst circulating in a delay line one period long, lightly
 // low-passed each trip, rings and decays like a plucked string.
-function pluckBuffer(ctx, midi) {
+function pluckBuffer(ctx: AudioContext, midi: number): AudioBuffer {
   const sr = ctx.sampleRate, n = Math.round(sr / (440 * 2 ** ((midi - 69) / 12)));
   const buf = ctx.createBuffer(1, sr * 2, sr), d = buf.getChannelData(0);
   for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
@@ -34,35 +38,46 @@ function pluckBuffer(ctx, midi) {
 }
 
 export class VirtualGuitar {
-  constructor(canvas) {
+  canvas: HTMLCanvasElement | null = null;
+  shape: string | null = null;           // chord shape the left hand holds
+  energy = new Array(6).fill(0);         // how hard each string is ringing (drawing only)
+  sideB = new Array(6).fill(false);      // which side of the string each pick is on, like the servos
+  sound = false;
+  private ctx: AudioContext | null = null;
+  private buffers: Record<number, AudioBuffer> = {};
+  private voices: ({ src: AudioBufferSourceNode; gain: GainNode } | null)[] = new Array(6).fill(null);
+  private timers: ReturnType<typeof setTimeout>[] = [];
+  private frame = 0;
+
+  // Start drawing on `canvas` (the component calls this once it is mounted).
+  attach(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.shape = null;                  // chord shape the left hand holds
-    this.energy = new Array(6).fill(0); // how hard each string is ringing (drawing only)
-    this.sideB = new Array(6).fill(false);  // which side of the string each pick is on, like the servos
-    this.sound = false;
-    this.ctx = null;
-    this.buffers = {};
-    this.voices = new Array(6).fill(null);
-    this.timers = [];
-    requestAnimationFrame(() => this.draw());
+    cancelAnimationFrame(this.frame);
+    this.frame = requestAnimationFrame(() => this.draw());
   }
 
-  audio() {  // AudioContext must be created after a click
+  detach() {
+    cancelAnimationFrame(this.frame);
+    this.canvas = null;
+  }
+
+  audio(): AudioContext {  // AudioContext must be created after a click
     if (!this.ctx) this.ctx = new AudioContext();
     if (this.ctx.state === 'suspended') this.ctx.resume();
     return this.ctx;
   }
 
-  pluck(s, when = 0) {
+  pluck(s: number, when = 0) {
     this.sideB[s] = !this.sideB[s];
     this.energy[s] = 1;
     const midi = noteMidi(this.shape, s);
     if (!this.sound || midi === null) return;
     const ctx = this.audio();
     const at = ctx.currentTime + when;
-    if (this.voices[s]) {  // one string, one note: damp the old one
-      this.voices[s].gain.gain.setTargetAtTime(0, at, 0.01);
-      this.voices[s].src.stop(at + 0.1);
+    const old = this.voices[s];
+    if (old) {  // one string, one note: damp the old one
+      old.gain.gain.setTargetAtTime(0, at, 0.01);
+      old.src.stop(at + 0.1);
     }
     const src = ctx.createBufferSource(), gain = ctx.createGain();
     src.buffer = this.buffers[midi] ||= pluckBuffer(ctx, midi);
@@ -73,8 +88,8 @@ export class VirtualGuitar {
   }
 
   // Play one bar of steps starting `delayMs` from now, with the left hand on `shape`.
-  // Plucks up to 150 ms late (the page polls the board) still play; older ones are skipped.
-  playBar(steps, delayMs = 0, shape = this.shape) {
+  // Plucks up to 150 ms late still play; older ones are skipped.
+  playBar(steps: Step[], delayMs = 0, shape: string | null = this.shape) {
     this.timers.push(setTimeout(() => { this.shape = shape; }, Math.max(0, delayMs)));
     for (const ev of barEvents(steps)) {
       const wait = delayMs + ev.t;
@@ -93,10 +108,13 @@ export class VirtualGuitar {
   }
 
   draw() {
-    const c = this.canvas, dpr = window.devicePixelRatio || 1;
+    const c = this.canvas;
+    if (!c) return;
+    const dpr = window.devicePixelRatio || 1;
     const w = c.clientWidth, h = c.clientHeight;
     if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
     const g = c.getContext('2d');
+    if (!g) return;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
     const css = getComputedStyle(document.documentElement);
@@ -104,7 +122,7 @@ export class VirtualGuitar {
     const accent = css.getPropertyValue('--accent'), line = css.getPropertyValue('--line');
 
     const left = 34, neckEnd = w * 0.55, fretW = (neckEnd - left) / 5;
-    const rowY = s => 18 + (5 - s) * ((h - 36) / 5);  // high e on top, like tab
+    const rowY = (s: number) => 18 + (5 - s) * ((h - 36) / 5);  // high e on top, like tab
     // frets
     g.strokeStyle = line; g.lineWidth = 2;
     for (let f = 0; f <= 5; f++) {
@@ -138,6 +156,6 @@ export class VirtualGuitar {
       g.beginPath(); g.moveTo(pickX - 6, py); g.lineTo(pickX + 6, py); g.lineTo(pickX, py + (this.sideB[s] ? 7 : -7)); g.fill();
       this.energy[s] *= 0.93;
     }
-    requestAnimationFrame(() => this.draw());
+    this.frame = requestAnimationFrame(() => this.draw());
   }
 }
