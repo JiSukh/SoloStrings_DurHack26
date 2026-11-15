@@ -184,3 +184,72 @@ def to_chunks(steps):
 
 def chunk_ms(chunk):
     return sum(int(t.split(":")[1]) for t in chunk.split(","))
+
+
+# --- Bars for the MCU sequencer (sketch/sequencer.h) ---
+# One bar is sent as "96;0:127,24:63": the bar length in ticks, then tick:mask events.
+# 1 tick = 1/24 beat (8ths, 16ths, triplets and 32nds all land on whole ticks).
+# mask = 6 string bits (bit 0 = low E) | KIND_DOWN / KIND_UP for a strum, nothing for a pluck.
+
+TICKS_PER_BEAT = 24
+SUB_PER_TICK = 125  # the sequencer counts 1/125 ticks, so one 20 ms frame = exactly `bpm` of them
+KIND_DOWN, KIND_UP = 0x40, 0x80
+MAX_BAR_CHARS = MAX_CHUNK  # one Bridge message
+
+
+def encode_bar(pattern, chord=None):
+    """Pattern events -> the sequencer's bar string, voiced for `chord` exactly as to_steps does:
+    R/R2 become the chord's bass strings, muted strings are dropped, an all-muted event is a rest."""
+    allowed = chord_strings(chord)
+    beats, parts = 0.0, []
+    for kind, strings, length in pattern:
+        tick = round(beats * TICKS_PER_BEAT)
+        assert abs(beats * TICKS_PER_BEAT - tick) < 1e-6, f"event at {beats} beats is between ticks"
+        strings = _voice(strings, allowed)
+        if strings:
+            mask = sum(1 << s for s in strings)
+            if kind in ("d", "u") and len(strings) > 1:
+                mask |= KIND_DOWN if kind == "d" else KIND_UP
+            parts.append(f"{tick}:{mask}")
+        beats += length
+    return f"{round(BAR_BEATS * TICKS_PER_BEAT)};" + ",".join(parts)
+
+
+def parse_bar(text):
+    """"96;0:127,24:63" -> (96, [(0, 127), (24, 63)])."""
+    length, _, events = text.partition(";")
+    return int(length), [tuple(int(x) for x in e.split(":")) for e in events.split(",") if e]
+
+
+def _fire(mask, ripple):
+    strings, kind = mask & 63, mask & (KIND_DOWN | KIND_UP)
+    order = [s for s in range(6) if strings >> s & 1]
+    if kind == KIND_UP:
+        order.reverse()
+    if not kind or len(order) <= 1:
+        return strings
+    for k, s in enumerate(order[1:], 1):
+        ripple[k - 1] |= 1 << s
+    return 1 << order[0]
+
+
+def simulate(text, bpm, frames):
+    """What sequencer.h plays: [[frame, strings plucked], ...] for `frames` 20 ms frames of the
+    bar looping at a steady `bpm`. Kept line for line with Sequencer::step()."""
+    length, events = parse_bar(text)
+    bar_len, pos, idx, ripple, out = length * SUB_PER_TICK, 0, 0, [0] * 6, []
+    for frame in range(frames):
+        m = ripple.pop(0)
+        ripple.append(0)
+        while True:
+            while idx < len(events) and 2 * events[idx][0] * SUB_PER_TICK < 2 * pos + bpm:
+                m |= _fire(events[idx][1], ripple)
+                idx += 1
+            if 2 * pos + bpm <= 2 * bar_len:
+                break
+            pos -= bar_len  # this frame is nearest the bar line: the next bar starts here
+            idx = 0
+        pos += bpm
+        if m:
+            out.append([frame, m])
+    return out
