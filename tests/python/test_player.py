@@ -29,9 +29,13 @@ class FakeBridge:
     def __init__(self, knob=18):
         self.calls = []
         self.knob = knob
+        self.button = 0  # a press waiting to be read: 1 = start, -1 = stop
 
     def call(self, name, *args, **kw):
         self.calls.append(name)
+        if name == "button":
+            press, self.button = self.button, 0
+            return press
         return self.knob if name == "knob" else (0 if name == "knob_click" else True)
 
 
@@ -333,6 +337,25 @@ class MainTest(unittest.TestCase):
         # back on: angles resent, then the pluck
         self.assertTrue(main.pluck(0)["ok"] and "play" in calls and "angles" in calls)
         self.assertEqual(main.store.get("angles")[1], [70, 120])  # saved in sqlite
+
+    def test_buttons_start_and_stop(self):
+        # D3 starts the last pattern played (Strum before anything has played), D5 stops
+        main, bridge = self.main, self.bridge
+        main.set_servos(False)  # debug mode: no servo calls, bar time runs in Python
+        try:
+            bridge.button = 1
+            self.assertTrue(wait_for(lambda: main.player.state["playing"] == "Strum"), "start button didn't play")
+            main.play("Folk (D DU UDU)")  # switches at the bar; the watcher remembers it
+            time.sleep(main.KNOB_WATCH_S * 2)
+            bridge.button = -1
+            self.assertTrue(wait_for(lambda: main.player.state["playing"] is None), "stop button didn't stop")
+            bridge.button = 1
+            self.assertTrue(wait_for(lambda: main.player.state["playing"] == "Folk (D DU UDU)"),
+                            "start didn't replay the last pattern")
+            bridge.button = -1
+            self.assertTrue(wait_for(lambda: main.player.state["playing"] is None))
+        finally:
+            main.set_servos(True)
 
     def test_state_is_pushed_within_a_second(self):
         main = self.main

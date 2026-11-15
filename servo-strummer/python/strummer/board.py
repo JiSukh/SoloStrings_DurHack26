@@ -126,6 +126,18 @@ class Board:
             self.lock.release()
         return (True, knob) if read else (False, None)
 
+    def button(self):
+        """A button press since the last ask: 1 = start (D3), -1 = stop (D5), 0 = none. Never
+        waits for the lock: the board keeps the press until it's read."""
+        if not self.lock.acquire(blocking=False):
+            return 0
+        try:
+            return int(self.bridge.call("button", timeout=1))
+        except Exception:
+            return 0
+        finally:
+            self.lock.release()
+
     # --- the MCU sequencer (sketch/sequencer.h). Each call takes the lock for just that call:
     # with short-interrupt pulses, messages mid-play are safe. ---
 

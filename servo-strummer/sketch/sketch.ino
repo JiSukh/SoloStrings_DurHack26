@@ -338,6 +338,36 @@ String seqState() {
          String(gestureCount) + " " + String(lastGesture);
 }
 
+// ---------- buttons: D3 start, D5 stop, each wired to GND ----------
+// INPUT_PULLUP: the pin idles HIGH through the chip's own resistor; a press pulls it LOW.
+const int START_PIN = 3, STOP_PIN = 5;
+volatile int buttonPress = 0;  // 1 = start, -1 = stop; kept until Python asks ("button")
+
+// Loop thread, every 40 ms (that spacing also rides out contact bounce). Stop acts on the
+// sequencer at once; Python still hears it, for debug mode and the old chunk path.
+void pollButtons() {
+  static bool startWas = true, stopWas = true;  // true = released
+  bool start = digitalRead(START_PIN), stop = digitalRead(STOP_PIN);
+  if (startWas && !start) buttonPress = 1;
+  if (stopWas && !stop) {
+    buttonPress = -1;
+    if (seqRunning()) {
+      stopBars();
+      Bridge.notify("stopped", 0);
+    }
+  }
+  startWas = start;
+  stopWas = stop;
+}
+
+int buttonRead() {
+  noInterrupts();
+  int b = buttonPress;
+  buttonPress = 0;
+  interrupts();
+  return b;
+}
+
 void setup() {
   *DEMCR |= 1 << 24;  // enable the debug/trace block that holds the cycle counter
   *DWT_CTRL |= 1;     // start the cycle counter
@@ -352,6 +382,8 @@ void setup() {
   }
 
   for (int i = 0; i < N; i++) pinMode(SERVO_PINS[i], OUTPUT);
+  pinMode(START_PIN, INPUT_PULLUP);
+  pinMode(STOP_PIN, INPUT_PULLUP);
   hold(SETTLE_MS);  // all picks to side A
 
   matrixBegin();
@@ -365,6 +397,7 @@ void setup() {
   Bridge.provide("stats", stats);
   Bridge.provide("knob", readKnob);
   Bridge.provide("knob_click", knobClick);
+  Bridge.provide("button", buttonRead);
   Bridge.provide("show", show);
   Bridge.provide("reset", resetPicks);
   Bridge.provide("angles", setAngles);
@@ -430,6 +463,7 @@ void loop() {
       }
     }
   }
+  if (frame % 2 == 0) pollButtons();
   drawChord();
   frame++;
 

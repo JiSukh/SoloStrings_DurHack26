@@ -45,11 +45,22 @@ player = Player(board,
                 on_state=lambda _state: push("state", snapshot()))
 
 
+def on_button(press, last):
+    """D3 (1) starts `last`, the pattern played last; D5 (-1) stops."""
+    if press == 1 and not player.state["playing"]:
+        player.play(last)
+    elif press == -1 and player.state["playing"]:
+        player.stop_playing()  # the board's sequencer already stopped itself
+
+
 def knob_watcher():
-    """While nothing plays, read the knob every 300 ms and push when it moves. The play loop
-    reads it itself while playing; idle_poll never waits for the lock."""
+    """Every 300 ms: the start/stop buttons; and while nothing plays, the knob, pushed when it
+    moves (the play loop reads it itself while playing). Neither waits for the lock."""
+    last = next(iter(PATTERNS))
     while True:
         time.sleep(KNOB_WATCH_S)
+        last = player.state["playing"] or last
+        on_button(board.button(), last)
         if player.state["playing"]:
             continue
         ok, knob = board.idle_poll(player.state["chord"])
