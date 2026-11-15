@@ -76,6 +76,31 @@ with tempfile.TemporaryDirectory() as d:
         f.write("# note\nELEVENLABS_API_KEY = 'abc=123'\n\nOTHER=x\nbroken line\n")
     assert read_env(os.path.join(d, ".env")) == {"ELEVENLABS_API_KEY": "abc=123", "OTHER": "x"}
     assert read_env(os.path.join(d, "missing")) == {}
+# debug mode: with the servos off, nothing that moves them reaches the board, timing still runs
+import types, time as _time
+calls = []
+class FakeBridge:
+    @staticmethod
+    def call(name, *args, **kw):
+        calls.append(name)
+        return 18 if name == "knob" else (0 if name == "knob_click" else True)
+app_utils = types.SimpleNamespace(App=types.SimpleNamespace(run=lambda: None), Bridge=FakeBridge)
+web_ui = types.SimpleNamespace(WebUI=lambda: types.SimpleNamespace(expose_api=lambda *a: None))
+sys.modules.update({"arduino": types.ModuleType("arduino"), "arduino.app_utils": app_utils,
+                    "arduino.app_bricks": types.ModuleType("arduino.app_bricks"), "arduino.app_bricks.web_ui": web_ui})
+import main
+main.ANGLES_FILE = main.Path(tempfile.mkdtemp()) / "angles.json"  # don't touch the real one
+main.set_servos(False)
+assert main.pluck(0)["ok"] and main.reset()["ok"] and main.set_angles(1, 70, 120)["ok"]
+main.play("Strum"); _time.sleep(0.3); main.stop_playing()
+for _ in range(100):
+    if main.state["playing"] is None: break
+    _time.sleep(0.05)
+assert main.state["playing"] is None, "debug play didn't stop"
+moving = {"play", "reset", "angles"}
+assert not moving & set(calls), f"debug mode moved servos: {sorted(moving & set(calls))}"
+main.set_servos(True)
+assert main.pluck(0)["ok"] and "play" in calls and "angles" in calls  # back on: angles resent, then the pluck
 # a down strum plucks low E first, an up strum high e first
 assert to_steps([("d", [0, 1, 2, 3, 4, 5], 1)], 60)[0][0] == 1
 assert to_steps([("u", [0, 1, 2, 3, 4, 5], 1)], 60)[0][0] == 32

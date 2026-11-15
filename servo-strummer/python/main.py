@@ -17,7 +17,8 @@ lock = threading.Lock()  # one conversation with the board at a time
 stop = threading.Event()
 # playing = pattern name; bar = the bar the robot is playing now, so the page can mirror it;
 # song = a loaded chord progression (one chord per bar), used while no chord is chosen
-state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None, "song": None}
+state = {"playing": None, "chord": None, "bpm": 90, "knob_bpm": None, "bar": None, "song": None,
+         "servos": True}  # servos False = debug mode: everything runs, but the servos never move
 shown_chord = "?"  # chord on the board's LED matrix; "?" = nothing sent yet
 
 # Pick end angles per string, [side A, side B], set from the page and kept across restarts.
@@ -35,12 +36,20 @@ def _knob_bpm():
     return pos * KNOB_BPM_STEP if pos >= 0 else None
 
 
+def _servo_play(steps, timeout=10):
+    """Send steps to the servos, or in debug mode just take as long as they would."""
+    if state["servos"]:
+        Bridge.call("play", steps, timeout=timeout)
+    else:
+        time.sleep(chunk_ms(steps) / 1000)
+
+
 def _send_angles():
     """Give the board the saved angles, once per app start. Caller must hold `lock`."""
     # shortcut: a lone MCU reset (brownout) brings back the defaults until the app restarts;
     # resend whenever stats() shows a fresh uptime if that ever matters.
     global angles_sent
-    if not angles_sent:
+    if not angles_sent and state["servos"]:  # in debug mode they wait until the servos are back
         for i, (a, b) in enumerate(state["angles"]):
             Bridge.call("angles", i, a, b, timeout=3)
         angles_sent = True
@@ -90,7 +99,7 @@ def _play():
                     break
                 # The sketch plays the whole chunk before replying; nothing else is sent meanwhile,
                 # since a message arriving mid-pulse could be garbled on the MCU.
-                Bridge.call("play", chunk, timeout=chunk_ms(chunk) / 1000 + 5)
+                _servo_play(chunk, timeout=chunk_ms(chunk) / 1000 + 5)
         print("play end", flush=True)
     except Exception as e:
         print(f"play error: {e!r}", flush=True)
@@ -98,7 +107,7 @@ def _play():
         try:
             # Keep exact pulses 300 ms so the last-plucked strings finish their swing,
             # then the board sends nothing until the next pattern.
-            Bridge.call("play", "0:300")
+            _servo_play("0:300")
         except Exception as e:
             print(f"tail error: {e!r}", flush=True)
         state["playing"] = None
@@ -137,7 +146,7 @@ def pluck(string: int):
     try:
         _send_angles()
         strings = range(6) if string == -1 else [string]
-        Bridge.call("play", ",".join(f"{1 << s}:300" for s in strings), timeout=10)
+        _servo_play(",".join(f"{1 << s}:300" for s in strings))
     finally:
         lock.release()
     return {"ok": True}
@@ -150,8 +159,11 @@ def set_angles(string: int, a: int, b: int):
     if not lock.acquire(timeout=0.5):
         return {"ok": False, "error": "stop the pattern first"}
     try:
+        global angles_sent
         _send_angles()
-        if not Bridge.call("angles", string, a, b, timeout=3):
+        if not state["servos"]:
+            angles_sent = False  # debug mode: the board gets them when the servos are back on
+        elif not Bridge.call("angles", string, a, b, timeout=3):
             return {"ok": False, "error": "board refused the angles"}
         state["angles"][string] = [a, b]
     finally:
@@ -169,10 +181,18 @@ def reset():
         return {"ok": False, "error": "stop the pattern first"}
     try:
         _send_angles()
-        Bridge.call("reset", timeout=5)
+        if state["servos"]:
+            Bridge.call("reset", timeout=5)
     finally:
         lock.release()
     return {"ok": True}
+
+
+def set_servos(on: bool):
+    """Debug mode switch: on=false keeps the servos still while everything else runs."""
+    state["servos"] = on
+    print(f"servos {'on' if on else 'off (debug mode)'}", flush=True)
+    return {"ok": True, "servos": on}
 
 
 def stop_playing():
@@ -251,6 +271,7 @@ ui.expose_api("POST", "/play", play)
 ui.expose_api("POST", "/stop", stop_playing)
 ui.expose_api("POST", "/pluck", pluck)
 ui.expose_api("POST", "/reset", reset)
+ui.expose_api("POST", "/servos", set_servos)
 ui.expose_api("POST", "/angles", set_angles)
 ui.expose_api("POST", "/chord", set_chord)
 ui.expose_api("POST", "/tempo", set_tempo)

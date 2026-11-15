@@ -54,12 +54,19 @@
     .calib label { display: flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); }
     .calib input { min-width: 0; }
     @media (max-width: 560px) { .calib { grid-template-columns: 1fr 1fr; } }
+    .debug { display: flex; gap: 10px; align-items: center; padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); cursor: pointer; }
+    .debug input { width: 18px; height: 18px; accent-color: var(--accent); }
+    .debug.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--card)); }
     .twin { display: block; width: 100%; height: 220px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
   </style>
 </head>
 <body>
   <main>
     <h1>Servo Strummer</h1>
+    <label class="debug" id="debugBox">
+      <input type="checkbox" id="debugMode">
+      <span><strong>Debug mode</strong>: servos off. Everything else runs; the virtual guitar plays instead.</span>
+    </label>
 
     <div class="now">
       <div><small>Chord</small><strong id="nowChord">All strings</strong></div>
@@ -206,6 +213,8 @@
         const s = await api('GET', '/status');
         clockOffset = s.now * 1000 - (t0 + performance.now()) / 2;  // board clock - page clock
         last = s;
+        $('debugMode').checked = !s.servos;
+        $('debugBox').classList.toggle('on', !s.servos);
         if (s.bar && s.bar.start !== mirrored) {  // the robot started a bar: mirror it
           mirrored = s.bar.start;
           const startIn = s.bar.start * 1000 - clockOffset - performance.now(), len = barLength(s.bar.steps);
@@ -406,6 +415,14 @@
     $('clear').onclick = () => {
       if (!confirm('Delete all recorded chord samples?')) return;
       samples = {}; save(); updateNorm(); showSamples();
+    };
+
+    // ---------- debug mode ----------
+    $('debugMode').onchange = async e => {
+      const debug = e.target.checked;
+      await api('POST', '/servos', { on: !debug });
+      if (debug) { twin.sound = $('twinSound').checked = true; twin.audio(); }  // hear what it would play
+      refresh();
     };
 
     // ---------- string test ----------
