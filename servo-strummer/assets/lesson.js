@@ -20,7 +20,7 @@ export const LESSONS = [
   { name: 'Stand by Me', kind: 'Songs', match: /\bstand by me\b/, chords: ['G', 'G', 'Em', 'Em', 'C', 'D', 'G', 'G'] },
   { name: 'Twelve bar blues', kind: 'Songs', match: /\b12 bar\b|\bblues\b/, chords: ['A7', 'A7', 'A7', 'A7', 'D7', 'D7', 'A7', 'A7', 'E7', 'D7', 'A7', 'E7'] },
   // fingerstyle: the robot picks single strings, so the tab shows exactly which ones ring
-  { name: 'House of the Rising Sun', kind: 'Fingerstyle', match: /\brising sun\b/, pattern: 'Arpeggio up-down', chords: ['Am', 'C', 'D', 'F', 'Am', 'C', 'E', 'E'] },
+  { name: 'House of the Rising Sun', kind: 'Fingerstyle', match: /\brising sun\b/, pattern: 'Rising Sun arpeggio', chords: ['Am', 'C', 'D', 'F', 'Am', 'C', 'E', 'E'] },
   { name: 'Travis picking', kind: 'Fingerstyle', match: /\btravis\b/, pattern: 'Travis picking', chords: times(2, ['C', 'Am', 'G', 'Em']) },
   { name: 'Fingerpicking study', kind: 'Fingerstyle', match: /\bfinger ?(style|picking)\b|\bp i m a\b/, pattern: 'Fingerstyle p-i-m-a', chords: times(2, ['Em', 'G', 'D', 'Am']) },
   { name: 'Arpeggio study', kind: 'Fingerstyle', match: /\barpeggios?\b/, pattern: 'Arpeggio up', chords: times(2, ['Am', 'Dm', 'G', 'C']) },

@@ -78,6 +78,8 @@ PATTERNS = {
     "Arpeggio up": [p([s], 1 / 3) for s in ALL] * 2,  # triplets: two runs per bar
     "Arpeggio down": [p([s], 1 / 3) for s in reversed(ALL)] * 2,
     "Arpeggio up-down": [p([s], .5) for s in ALL + [4, 3]],
+    # House of the Rising Sun: bass, then G-B-e-B-G, six even notes to the bar (its 6/8 roll)
+    "Rising Sun arpeggio": [p([s], 2 / 3) for s in [R, 3, 4, 5, 4, 3]],
     "Boom-chick": [p([R], 1), d(TREBLE, 1), p([R2], 1), d(TREBLE, 1)],
     "Fingerstyle p-i-m-a": [p([R], .5), p([3], .5), p([4], .5), p([5], .5),
                             p([R2], .5), p([3], .5), p([4], .5), p([5], .5)],
