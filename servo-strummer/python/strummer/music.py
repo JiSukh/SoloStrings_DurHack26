@@ -1,4 +1,4 @@
-"""Picking/strumming patterns, and encoding them for the sketch's "play" call.
+"""Music: chords, picking/strumming patterns, and encoding them for the sketch's "play" call.
 
 Strings: 0 = low E, 1 = A, 2 = D, 3 = G, 4 = B, 5 = high e.
 Each event is (kind, strings, beats):
