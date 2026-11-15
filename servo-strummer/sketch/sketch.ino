@@ -1,6 +1,13 @@
 #include <Arduino_RouterBridge.h>
 #include <Wire.h>
 #include <Arduino_LED_Matrix.h>  // only for matrixBegin/matrixWrite, built into the core
+#include "sequencer.h"   // bar parsing, timing, ripple, double buffer (pure C++, host-tested)
+#include "servo_out.h"   // pulses with short interrupt pauses (edge plan host-tested)
+
+// Threads: the loop thread is the only one that drives the servo pins and the knob's I2C, so a
+// pulse and an I2C read never overlap. Bridge handlers run on the Bridge's thread: they only
+// set variables (with interrupts off for the few microseconds that takes), or hand work that
+// moves servos to the loop thread and wait for it (see onLoopThread).
 
 const int SERVO_PINS[] = {2, 4, 7, 8, 12, 13};
 const int N = sizeof(SERVO_PINS) / sizeof(SERVO_PINS[0]);
@@ -17,10 +24,11 @@ bool onSideB[N];  // which side each pick is on now
 // library pulls in sensor drivers the board can't download without internet.
 uint8_t knobAddr = 0;         // 0 = no knob found
 bool knobSetNegated = false;  // some knob firmware stores set() values negated (as in Arduino_Modulino)
-const int KNOB_MAX = 40;      // Python maps knob 0..40 to 0..200 BPM (0 = stop)
+const int KNOB_MAX = 40;      // knob 0..40 = 0..200 BPM (0 = stop)
 const int KNOB_START = 18;    // 90 BPM
+const int KNOB_BPM_STEP = 5;  // same as Python
 bool knobDown = false;        // button state at the last read
-// Presses are kept until Python asks, so short ones aren't missed. Two presses within
+// Presses are kept until asked for, so short ones aren't missed. Two presses within
 // DOUBLE_MS are a double tap; a lone press counts once DOUBLE_MS passes with no second one.
 const uint32_t DOUBLE_MS = 400;
 uint32_t lastPressMs = 0;
@@ -38,8 +46,10 @@ bool knobRead(int16_t& pos) {
   bool down = Wire1.read() != 0;
   if (down && !knobDown) {
     uint32_t now = millis();
+    noInterrupts();  // knobClick() runs on the Bridge thread too
     if (singlePending && now - lastPressMs < DOUBLE_MS) { knobGesture = -1; singlePending = false; }
     else { singlePending = true; lastPressMs = now; }
+    interrupts();
   }
   knobDown = down;
   pos = (int16_t)(lo | (hi << 8));
@@ -68,11 +78,38 @@ bool knobBegin() {
   return true;
 }
 
+// Knob position for the tempo, kept within 0..KNOB_MAX. Read on the loop thread only; the
+// Bridge's "knob" call gets the last value.
+volatile int knobPos = -1;
+
+void pollKnob() {
+  int16_t pos;
+  if (!knobAddr || !knobRead(pos)) return;
+  if (pos < 0 || pos > KNOB_MAX) {  // stop at the ends so turning back responds at once
+    pos = constrain(pos, 0, KNOB_MAX);
+    knobWrite(pos);
+  }
+  knobPos = pos;
+}
+
+// -1 when no knob is plugged in.
+int readKnob() { return knobAddr ? knobPos : -1; }
+
+// 1 = pressed (next pattern), -1 = double-tapped (previous), 0 = nothing; each reported once.
+int knobClick() {
+  noInterrupts();
+  if (singlePending && millis() - lastPressMs >= DOUBLE_MS) { singlePending = false; knobGesture = 1; }
+  int g = knobGesture;
+  knobGesture = 0;
+  interrupts();
+  return g;
+}
+
 // Cortex-M cycle counter: keeps counting with interrupts off, unlike micros().
 volatile uint32_t* const DEMCR      = (volatile uint32_t*)0xE000EDFC;
 volatile uint32_t* const DWT_CTRL   = (volatile uint32_t*)0xE0001000;
 volatile uint32_t* const DWT_CYCCNT = (volatile uint32_t*)0xE0001004;
-const uint32_t CYCLES_PER_US = 160;  // 160 MHz core clock; checked in setup()
+const uint32_t CYCLES_PER_US = servo_out::CYCLES_PER_US;  // 160 MHz core clock; checked in setup()
 
 void waitUntil(uint32_t start, uint32_t us) {
   while (*DWT_CYCCNT - start < us * CYCLES_PER_US) {}
@@ -82,73 +119,38 @@ uint32_t widthUs(int i) {  // same pulse range as the Servo library
   return map(onSideB[i] ? SIDE_B[i] : SIDE_A[i], 0, 180, 544, 2400);
 }
 
-// One servo frame: all pins rise together and each drops at its own width. Interrupts are
-// off so nothing can stretch a pulse; only safe while play() runs, because a Bridge message
-// arriving with interrupts off could be garbled (Python waits for play() to reply).
+// One servo frame: every pin at its current side. Pulses are made here instead of with the
+// Servo library: its software timer gets delayed by other interrupts, which stretches pulses
+// (twitching). Loop thread only.
 void pulseFrame() {
   uint32_t width[N];
-  bool high[N];
-  int left = N;
   for (int i = 0; i < N; i++) width[i] = widthUs(i);
-  uint32_t start = *DWT_CYCCNT;
-  noInterrupts();
-  for (int i = 0; i < N; i++) { digitalWrite(SERVO_PINS[i], HIGH); high[i] = true; }
-  while (left > 0) {
-    uint32_t us = (*DWT_CYCCNT - start) / CYCLES_PER_US;
-    for (int i = 0; i < N; i++) {
-      if (high[i] && us >= width[i]) { digitalWrite(SERVO_PINS[i], LOW); high[i] = false; left--; }
-    }
-  }
-  interrupts();
+  servo_out::pulseFrame(SERVO_PINS, width, N);
 }
 
-// Hold every servo at its current side for ms, with exact pulses. Pulses are made here
-// instead of with the Servo library: its software timer gets delayed by other interrupts,
-// which stretches pulses (twitching). Outside play() no pulses are sent at all, so nothing
-// can fire between patterns.
+// Hold every servo at its current side for ms, with exact pulses (string test, reset,
+// calibration). Outside these and the sequencer no pulses are sent at all, so nothing can
+// fire between patterns. Loop thread only.
 void hold(int ms) {
   for (int frames = max(1, (ms + 10) / 20); frames > 0; frames--) {
     uint32_t start = *DWT_CYCCNT;
     pulseFrame();
-    // Check the knob button every 40 ms (fast enough to see the gap in a double tap);
+    // Check the knob every 40 ms (fast enough to see the gap in a double tap);
     // the read fits in the gap before the next pulse.
-    if (knobAddr && frames % 2 == 0) { int16_t pos; knobRead(pos); }
+    if (knobAddr && frames % 2 == 0) pollKnob();
     waitUntil(start, 20000);  // servos expect one pulse every 20 ms
   }
 }
 
-// Called from Python through the Bridge with steps "mask:ms,mask:ms,...": each step plucks
-// the strings in the 6-bit mask (bit 0 = low E) by flipping their side, then holds for ms.
-// Plays to completion before replying, so the Linux side can't send more messages while
-// interrupts are paused for a pulse.
-bool playSteps(const char* p);
+seq::Sequencer sequencer;  // shared with the Bridge thread: touch it only with interrupts off
+volatile uint32_t playCount = 0;   // debug: shows whether the board re-runs commands by itself
+volatile uint32_t barsPlayed = 0;
 
-volatile uint32_t playCount = 0;  // debug: shows whether the board re-runs commands by itself
-
-// Debug: "uptime_ms plays". Uptime near zero means the MCU just reset (e.g. 5V brownout).
+// Debug: "uptime_ms plays bars late_edges max_late_us". Uptime near zero means the MCU just
+// reset (e.g. 5V brownout); late edges are pulse edges an interrupt delayed by more than 5 us.
 String stats() {
-  return String(millis()) + " " + String(playCount);
-}
-
-// Knob position for the tempo, kept within 0..KNOB_MAX; -1 when no knob is plugged in.
-// Only called between chunks (Python waits for each reply), so I2C never overlaps a pulse.
-int readKnob() {
-  int16_t pos;
-  if (!knobAddr || !knobRead(pos)) return -1;
-  if (pos < 0 || pos > KNOB_MAX) {  // stop at the ends so turning back responds at once
-    pos = constrain(pos, 0, KNOB_MAX);
-    knobWrite(pos);
-  }
-  return pos;
-}
-
-// 1 = pressed (next pattern), -1 = double-tapped (previous), 0 = nothing; each reported once.
-// Python asks every bar.
-int knobClick() {
-  if (singlePending && millis() - lastPressMs >= DOUBLE_MS) { singlePending = false; knobGesture = 1; }
-  int g = knobGesture;
-  knobGesture = 0;
-  return g;
+  return String(millis()) + " " + String(playCount) + " " + String(barsPlayed) + " " +
+         String(servo_out::lateEdges) + " " + String(servo_out::maxLateUs);
 }
 
 // ---------- LED matrix (8 rows x 13 columns): shows the chord name ----------
@@ -178,7 +180,7 @@ const Glyph FONT[] = {
 char shown[12] = "-";              // set from the Bridge thread, drawn by loop()
 volatile bool shownChanged = true;
 
-// Called from Python between chunks (never mid-pulse); "" shows "-" (all strings).
+// "" shows "-" (all strings). Safe while a bar plays.
 bool show(String name) {
   noInterrupts();  // no thread switch while loop() might be copying it
   strncpy(shown, name.length() ? name.c_str() : "-", sizeof(shown) - 1);
@@ -205,27 +207,68 @@ void drawText(const char* text, int x) {
   matrixWrite(frame);
 }
 
-// Calibration: new end angles for one string's pick. Holds briefly so it moves there now.
+// Centred if it fits (C, Am, B7), scrolling if not (Fmaj7, Cadd9). Loop thread.
+void drawChord() {
+  static char text[12];
+  static int width = 0, offset = 0;
+  static uint32_t lastStep = 0;
+  if (shownChanged) {
+    noInterrupts();
+    memcpy(text, shown, sizeof(text));
+    shownChanged = false;
+    interrupts();
+    width = strlen(text) * 6 - 1;
+    offset = 13;  // scrolling starts with the text at the left edge
+    if (width <= 13) drawText(text, (13 - width) / 2);
+  }
+  if (width > 13 && millis() - lastStep >= 120) {
+    lastStep = millis();
+    drawText(text, 13 - offset);
+    offset = (offset + 1) % (width + 14);
+  }
+}
+
+// ---------- work the Bridge thread hands to the loop thread ----------
+// Calls that move servos outside the sequencer put a request here and wait for the loop
+// thread to finish it, so Python still gets its reply only once the servos are done.
+enum Request : uint8_t { REQ_NONE, REQ_PLAY, REQ_SETTLE };
+volatile uint8_t request = REQ_NONE;
+volatile bool requestResult = false;
+char requestSteps[260];
+
+bool onLoopThread(uint8_t r) {
+  request = r;
+  while (request != REQ_NONE) delay(1);
+  return requestResult;
+}
+
+bool seqRunning() {
+  noInterrupts();
+  bool r = sequencer.running;
+  interrupts();
+  return r;
+}
+
+// Calibration: new end angles for one string's pick. Holds briefly so it moves there now;
+// while a bar plays, the next pulses simply use them.
 bool setAngles(int i, int a, int b) {
   if (i < 0 || i >= N || a < 10 || b > 170 || b - a < 10) return false;
   SIDE_A[i] = a;
   SIDE_B[i] = b;
-  hold(SETTLE_MS);
+  if (!seqRunning()) onLoopThread(REQ_SETTLE);
   return true;
 }
 
-// Every pick back to its start side (A), as at power-up.
+// Every pick back to its start side (A), as at power-up. Not while a bar plays.
 bool resetPicks() {
+  if (seqRunning()) return false;
   for (int i = 0; i < N; i++) onSideB[i] = false;
-  hold(SETTLE_MS);
-  return true;
+  return onLoopThread(REQ_SETTLE);
 }
 
-bool play(String steps) {
-  playCount++;
-  return playSteps(steps.c_str());
-}
-
+// Steps "mask:ms,mask:ms,...": each step plucks the strings in the 6-bit mask (bit 0 = low E)
+// by flipping their side, then holds for ms. For the string test, and for the old chunk path
+// (SEQUENCER = False in player.py). Not while a bar plays.
 bool playSteps(const char* p) {
   while (*p) {
     char* end;
@@ -238,6 +281,61 @@ bool playSteps(const char* p) {
     p = (*end == ',') ? end + 1 : end;
   }
   return true;
+}
+
+bool play(String steps) {
+  if (seqRunning() || steps.length() >= sizeof(requestSteps)) return false;
+  playCount++;
+  strcpy(requestSteps, steps.c_str());
+  return onLoopThread(REQ_PLAY);
+}
+
+// ---------- sequencer (bar format: see sequencer.h) ----------
+
+// The bar to play after the current one (or the first one, before start). Replaces any bar
+// already queued. bpm is Python's tempo, used only when no knob is plugged in (0 = keep).
+bool queueBar(String text, int bpm) {
+  seq::Bar bar;
+  if (!seq::parseBar(text.c_str(), bar)) return false;
+  noInterrupts();
+  sequencer.queue(bar);
+  if (!knobAddr && bpm > 0 && bpm <= 255) sequencer.setTempo(bpm);
+  interrupts();
+  return true;
+}
+
+volatile uint32_t gestureCount = 0;  // for Python's polling fallback: goes up on every gesture
+volatile int lastGesture = 0;
+
+// Plays the queued bar from tick 0, looping it until another is queued. The knob's tempo wins
+// over bpm when a knob is plugged in.
+bool startBars(int bpm) {
+  int pos = knobPos;
+  int tempo = knobAddr && pos >= 0 ? pos * KNOB_BPM_STEP : bpm;
+  if (tempo <= 0 || tempo > 255) return false;
+  knobClick();  // a press from before Play is stale
+  noInterrupts();
+  bool ok = sequencer.start(tempo);
+  interrupts();
+  return ok;
+}
+
+bool stopBars() {
+  noInterrupts();
+  sequencer.stop();
+  interrupts();
+  return true;
+}
+
+// For when notifications don't reach Python: "running bar bpm gesture_count last_gesture".
+String seqState() {
+  noInterrupts();
+  bool running = sequencer.running;
+  int32_t bar = sequencer.barNo;
+  int bpm = sequencer.bpm;
+  interrupts();
+  return String(running ? 1 : 0) + " " + String(bar) + " " + String(bpm) + " " +
+         String(gestureCount) + " " + String(lastGesture);
 }
 
 void setup() {
@@ -260,7 +358,7 @@ void setup() {
 
   Wire1.begin();  // Qwiic connector
   Wire1.setClock(100000);
-  if (knobBegin()) knobWrite(KNOB_START);
+  if (knobBegin()) { knobWrite(KNOB_START); pollKnob(); }
 
   Bridge.begin();
   Bridge.provide("play", play);
@@ -270,26 +368,79 @@ void setup() {
   Bridge.provide("show", show);
   Bridge.provide("reset", resetPicks);
   Bridge.provide("angles", setAngles);
+  Bridge.provide("queue", queueBar);
+  Bridge.provide("start", startBars);
+  Bridge.provide("stop", stopBars);
+  Bridge.provide("seq", seqState);
 }
 
-// Draws the chord: centred if it fits (C, Am, B7), scrolling if not (Fmaj7, Cadd9).
+const int TAIL_FRAMES = 15;  // after a stop, 300 ms of exact pulses so the last plucks finish swinging
+const uint32_t SLEEP_MARGIN_US = 3000;  // stop sleeping this long before the next frame
+
+// One 20 ms frame per call: the sequencer's plucks and the pulse, then the knob, notifications
+// and the matrix in the gap before the next pulse.
 void loop() {
-  static char text[12];
-  static int width = 0, offset = 0;
-  static uint32_t lastStep = 0;
-  if (shownChanged) {
-    noInterrupts();
-    memcpy(text, shown, sizeof(text));
-    shownChanged = false;
-    interrupts();
-    width = strlen(text) * 6 - 1;
-    offset = 13;  // scrolling starts with the text at the left edge
-    if (width <= 13) drawText(text, (13 - width) / 2);
+  static uint32_t frameStart = *DWT_CYCCNT;
+  static uint32_t frame = 0;
+  static int tail = 0;
+
+  if (request != REQ_NONE) {  // string test / reset / calibration, from the Bridge thread
+    requestResult = request == REQ_PLAY ? playSteps(requestSteps) : (hold(SETTLE_MS), true);
+    request = REQ_NONE;
+    frameStart = *DWT_CYCCNT;
+    return;
   }
-  if (width > 13 && millis() - lastStep >= 120) {
-    lastStep = millis();
-    drawText(text, 13 - offset);
-    offset = (offset + 1) % (width + 14);
+
+  noInterrupts();
+  bool wasRunning = sequencer.running;
+  uint8_t flip = sequencer.step();
+  bool running = sequencer.running, stoppedByTempo = sequencer.stoppedByTempo;
+  bool barStarted = sequencer.barStarted;
+  int32_t barNo = sequencer.barNo;
+  int bpm = sequencer.bpm;
+  sequencer.barStarted = false;
+  sequencer.stoppedByTempo = false;
+  interrupts();
+
+  for (int i = 0; i < N; i++) if (flip & (1 << i)) onSideB[i] = !onSideB[i];
+  if (wasRunning) tail = TAIL_FRAMES;
+  if (wasRunning || tail > 0) {
+    pulseFrame();
+    if (!running) tail--;
   }
-  delay(10);  // sleep, so this thread doesn't compete with play()
+
+  if (barStarted) {
+    barsPlayed++;
+    Bridge.notify("bar", (int)barNo, bpm);
+  }
+  if (stoppedByTempo) Bridge.notify("stopped", 0);
+
+  if (knobAddr && frame % 2 == 0) {  // every 40 ms: fast enough to see the gap in a double tap
+    pollKnob();
+    if (running) {
+      int pos = knobPos;
+      noInterrupts();
+      sequencer.setTempo(pos * KNOB_BPM_STEP);  // from the next beat; 0 stops there
+      interrupts();
+      int g = knobClick();  // while idle, gestures wait for Python's knob_click instead
+      if (g) {
+        lastGesture = g;
+        gestureCount++;
+        Bridge.notify("knob", g);
+      }
+    }
+  }
+  drawChord();
+  frame++;
+
+  // Sleep through most of the frame so the Bridge thread gets the CPU (1 ms at a time, in case
+  // the kernel tick is coarse), then busy-wait the rest. The cadence is absolute: a frame that
+  // starts a little late is followed by a shorter one, so the tempo doesn't drift.
+  if ((*DWT_CYCCNT - frameStart) / CYCLES_PER_US > 40000) {  // fell far behind: restart from now
+    frameStart = *DWT_CYCCNT;
+    return;
+  }
+  while ((*DWT_CYCCNT - frameStart) / CYCLES_PER_US + SLEEP_MARGIN_US < 20000) delay(1);
+  waitUntil(frameStart, 20000);
+  frameStart += 20000 * CYCLES_PER_US;
 }
