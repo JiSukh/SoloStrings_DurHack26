@@ -12,7 +12,8 @@ from strummer.board import Board
 from strummer.config import read_env
 from strummer.music import CHORDS, PATTERNS, RANDOM
 from strummer.player import Player
-from strummer.store import Store
+from strummer.songs import BY_ID as SONGS_BY_ID, SONGS
+from strummer.store import GRADES, Store
 
 APP_DIR = Path(__file__).resolve().parent.parent  # servo-strummer/
 ENV = read_env(APP_DIR / ".env")  # servo-strummer/.env, not in git
@@ -140,6 +141,33 @@ def debug():
     return board.stats()
 
 
+def songs():
+    return {"songs": SONGS}
+
+
+MAX_SESSION_BARS = 256
+
+
+def save_session(song: str, bpm: int, results: str):
+    """A finished practice: song id (or "custom"), tempo, and each bar as chord:grade,
+    e.g. "Am:hit,G:late,C:miss". Score and accuracies are worked out here."""
+    if song not in SONGS_BY_ID and song != "custom" and not song.startswith("loop:"):
+        return {"ok": False, "error": "unknown song"}
+    bars = []
+    for item in (results or "").split(","):
+        chord, _, grade = item.strip().partition(":")
+        if chord not in CHORDS or grade not in GRADES:
+            return {"ok": False, "error": f"bad bar result {item!r}: need chord:{'|'.join(GRADES)}"}
+        bars.append((chord, grade))
+    if not bars or len(bars) > MAX_SESSION_BARS:
+        return {"ok": False, "error": f"need 1 to {MAX_SESSION_BARS} bars"}
+    return {"ok": True, "session": store.save_session(song, min(max(bpm, 30), 200), bars)}
+
+
+def progress():
+    return store.progress()
+
+
 ui.expose_api("GET", "/patterns", patterns)
 ui.expose_api("GET", "/chords", chords)
 ui.expose_api("POST", "/play", play)
@@ -155,6 +183,9 @@ ui.expose_api("GET", "/status", status)
 ui.expose_api("GET", "/debug", debug)
 ui.expose_api("GET", "/config", config)
 ui.expose_api("GET", "/steps", steps)
+ui.expose_api("GET", "/songs", songs)
+ui.expose_api("POST", "/sessions", save_session)
+ui.expose_api("GET", "/progress", progress)
 
 threading.Thread(target=knob_watcher, daemon=True).start()
 

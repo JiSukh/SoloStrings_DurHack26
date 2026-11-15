@@ -64,6 +64,44 @@ class StoreTest(unittest.TestCase):
         self.assertIsNone(self.store.get("angles"))
 
 
+class SessionsTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "strummer.db"
+        self.store = Store(self.path)
+
+    def tearDown(self):
+        self.store.close()
+        self.dir.cleanup()
+
+    def test_score_and_accuracies(self):
+        bars = [("Am", "hit"), ("G", "late"), ("C", "miss"), ("C", "hit"), ("Am", "silent")]
+        s = self.store.save_session("riptide", 100, bars)
+        self.assertEqual(s["score"], 50)  # (1 + .5 + 0 + 1 + 0) / 5
+        self.assertEqual(s["chords"]["C"], {"accuracy": 50, "bars": 2})
+        self.assertEqual(s["chords"]["G"], {"accuracy": 50, "bars": 1})
+        # changes are the bar after a different chord: Am→G late, G→C miss, C→Am silent (C→C is no change)
+        self.assertEqual(s["changes"], {"Am→G": {"accuracy": 50, "bars": 1}, "G→C": {"accuracy": 0, "bars": 1},
+                                        "C→Am": {"accuracy": 0, "bars": 1}})
+
+    def test_progress_survives_a_restart(self):
+        self.store.save_session("riptide", 100, [("Am", "miss"), ("G", "hit")], started=1)
+        self.store.save_session("riptide", 105, [("Am", "hit"), ("G", "hit")], started=2)
+        self.store.save_session("blues-a", 90, [("A7", "hit"), ("D7", "miss")], started=3)
+        self.store.close()
+        self.store = Store(self.path)  # the app restarted
+        p = self.store.progress()
+        self.assertEqual(p["songs"]["riptide"]["best"], 100)
+        self.assertEqual(p["songs"]["riptide"]["last"], 100)
+        self.assertEqual([h["score"] for h in p["songs"]["riptide"]["history"]], [50, 100])
+        self.assertEqual(p["songs"]["blues-a"]["last"], 50)
+        self.assertEqual([r["song"] for r in p["recent"]], ["blues-a", "riptide", "riptide"])
+        self.assertEqual(p["hardest"][0]["change"], "A7→D7")  # 0 %, the worst
+        self.assertEqual(p["changes"]["Am→G"], {"accuracy": 100, "bars": 2})  # G→Am across two sessions isn't a change
+        self.assertNotIn("G→Am", p["changes"])
+        self.assertEqual(p["chords"]["Am"], {"accuracy": 50, "bars": 2})
+
+
 class EnvTest(unittest.TestCase):
     def test_comments_quotes_and_missing_file(self):
         with tempfile.TemporaryDirectory() as d:
