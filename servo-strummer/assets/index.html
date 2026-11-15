@@ -218,7 +218,7 @@
     import { VirtualGuitar, barLength } from './twin.js';
     import { parseCommand, spokenChord, chordHelp, keyterms } from './voice.js';
     import { transcribe, tts, Speaker, VoiceMic, DEFAULT_VOICE } from './eleven.js';
-    import { LESSONS, Lesson, LessonLane, randomChords, cleanProgression, earShapes } from './lesson.js';
+    import { LESSONS, Lesson, LessonLane, randomChords, cleanProgression } from './lesson.js';
     import { songChords } from './gemini.js';
 
     const $ = id => document.getElementById(id);
@@ -236,7 +236,7 @@
     let gemini = { enabled: false, key: '', model: '' };     // same; optional
     const lane = new LessonLane($('lane'));
     lane.idle = 'Press Random chords, or say “teach me Riptide”.';
-    let lesson = null, lessonEar = {}, lessonTimers = [], talkCount = null;
+    let lesson = null, lessonTimers = [], talkCount = null;
     const lessonOn = () => !!lesson && lesson.endedAt === null;
 
     const pressOnly = (container, match) => { for (const b of container.children) b.setAttribute('aria-pressed', b.dataset.value === match); };
@@ -345,7 +345,7 @@
     })();
 
     // ---------- chord by ear (maths in listen.js) ----------
-    const FFT = 16384, GATE_DB = -70, MIN_SCORE = 0.85, MIN_MARGIN = 0.01, LESSON_SCORE = 0.8;
+    const FFT = 16384, GATE_DB = -70, MIN_SCORE = 0.85, MIN_MARGIN = 0.01;
     let ear = null;  // the open microphone, once: shared by chord by ear and the lessons
     function startEar() {
       return ear ||= (async () => {
@@ -506,7 +506,7 @@
 
     // Loads the chords as the board's song, counts in for `leadMs`, then has the robot strum
     // them once through. Returns '' when the lesson is on its way, else why it isn't.
-    async function startLesson({ title, chords }, leadMs = 4000) {
+    async function startLesson({ title, chords, pattern = 'Strum' }, leadMs = 4000) {
       endLesson();
       stopSim();
       if (playing) {  // a lesson starts from silence, with a count-in
@@ -524,14 +524,13 @@
       if (!bpm) { await api('POST', '/song', { chords: '' }); return 'The knob is at zero. Turn it up, then ask again.'; }
       const barMs = 4 * 60000 / bpm;
       const mine = lesson = new Lesson({ title, chords, barMs, startAt: performance.now() + Math.max(leadMs, barMs) });
-      lessonEar = earShapes(chords, CHORDS);
       twin.shape = CHORDS[chords[0]];  // fingers ready on the first chord
       $('lessonTitle').textContent = title; $('lessonScore').textContent = ''; $('lessonStop').hidden = false;
       say(note);
       lane.show(lesson);
       lessonTimers.push(setTimeout(async () => {
         if (lesson !== mine) return;
-        const pattern = patterns.includes('Strum') ? 'Strum' : patterns[0];
+        if (!patterns.includes(pattern)) pattern = patterns[0];
         selectedPattern = pattern; pressOnly($('patterns'), pattern);
         const p = await api('POST', '/play', { pattern });
         if (lesson !== mine) return;
@@ -551,13 +550,14 @@
       if (no === lesson.chords.length - 1) lessonTimers.push(setTimeout(finishLesson, at + len - 100 - performance.now()));
     }
 
-    // What the microphone hears goes to the bar being played (chroma, or null when too quiet).
+    // What the microphone hears (chroma, or null when too quiet) is compared with the one chord
+    // wanted right now; the bar keeps how alike they were, and lesson.js decides green or red.
     function lessonHear(heard) {
-      const r = heard && matchChord(heard, lessonEar);
-      const name = r && r.score >= LESSON_SCORE ? r.chord : null;
-      $('heard').textContent = name || (heard ? '–' : 'too quiet');
-      lesson.hear(performance.now(), name);
-      lesson.settle(performance.now());
+      const now = performance.now(), chord = lesson.chordAt(now);
+      const r = heard && chord ? matchChord(heard, { [chord]: CHORDS[chord] }) : null;
+      $('heard').textContent = !heard ? 'too quiet' : r ? `${chord} ${Math.round(r.score * 100)}%` : '–';
+      lesson.hear(now, r ? r.score : null);
+      lesson.settle(now);
     }
 
     function lessonCleanUp() {
@@ -616,7 +616,7 @@
       }
       const title = song ? song.name : 'Random chords', chords = song ? song.chords : randomChords(8);
       const spoken = secret.enabled && $('speakReplies').checked;
-      const error = await startLesson({ title, chords }, spoken ? 7000 : 4000);  // time for the reply to be said
+      const error = await startLesson({ title, chords, pattern: song?.pattern }, spoken ? 7000 : 4000);  // time for the reply to be said
       if (error) return error;
       const used = [...new Set(chords)].map(spokenChord).join(', ');
       return `Sure. ${song ? `Let's learn ${title}` : 'Here are some basic chords'}. It uses ${used}. Start on ${spokenChord(chords[0])}.`;

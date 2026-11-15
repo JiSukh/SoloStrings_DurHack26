@@ -1,6 +1,7 @@
 // lesson.js: the songs, the random warm-up, bar timing and the green/red verdicts; and the
 // "teach me ..." voice commands that start a lesson. Uses the real chord names from music.py.
-import { BASIC, LESSONS, OPEN, MAX_LESSON_BARS, randomChords, cleanProgression, earShapes, gradeBar, Lesson } from '../servo-strummer/assets/lesson.js';
+import { BASIC, LESSONS, MAX_LESSON_BARS, PASS_SCORE, randomChords, cleanProgression, gradeBar, Lesson } from '../servo-strummer/assets/lesson.js';
+import { matchChord, template } from '../servo-strummer/assets/listen.js';
 import { parseCommand, normalise } from '../servo-strummer/assets/voice.js';
 import { songPrompt } from '../servo-strummer/assets/gemini.js';
 import { readFileSync } from 'node:fs';
@@ -19,7 +20,13 @@ for (const l of LESSONS) {
   assert.ok(l.chords.every(c => chords.includes(c)), l.name);
   assert.ok(l.chords.length >= 4 && l.chords.length <= MAX_LESSON_BARS, l.name);
   assert.ok(l.match.test(normalise(l.name)), `${l.name} is not matched by its own name`);
+  assert.ok(!l.pattern || patterns.includes(l.pattern), `${l.name}: no such pattern ${l.pattern}`);
 }
+// Riptide: A minor one bar, G one bar, C two bars, repeated
+const riptide = LESSONS.find(l => l.name === 'Riptide');
+assert.equal(riptide.chords.length % 4, 0);
+riptide.chords.forEach((c, i) => assert.equal(c, ['Am', 'G', 'C', 'C'][i % 4], `Riptide bar ${i + 1}`));
+assert.ok(riptide.chords.length >= 16, 'Riptide goes round more than twice');
 
 // random warm-up: the right length, only from the pool, never the same chord twice running
 for (let run = 0; run < 50; run++) {
@@ -40,20 +47,20 @@ assert.equal(cleanProgression(['G', 'C'], chords), null, 'too short');
 assert.equal(cleanProgression('G C D', chords), null);
 assert.equal(cleanProgression(new Array(100).fill(0).map((_, i) => (i % 2 ? 'G' : 'C')), chords).length, MAX_LESSON_BARS);
 
-// what the ear chooses between: the lesson's chords, the basic ones, and the open strings
-const shapes = earShapes(['A7', 'D7'], CHORDS);
-assert.equal(shapes[OPEN], '000000');
-assert.equal(shapes.A7, CHORDS.A7);
-assert.equal(shapes.G, CHORDS.G);
-assert.equal(shapes.Cadd9, undefined, 'look-alikes outside the lesson are left out');
-
-// one bar's verdict
-assert.equal(gradeBar(['G', 'G', null, 'G'], 'G'), 'hit');
-assert.equal(gradeBar(['C', 'G', 'G', null], 'G'), 'hit', 'a slow change still counts');
-assert.equal(gradeBar(['C', 'C', 'C', 'G', 'G'], 'G'), 'miss', 'mostly the wrong chord');
-assert.equal(gradeBar(['G'], 'G'), 'miss', 'one reading is not enough');
-assert.equal(gradeBar([null, null], 'G'), 'miss', 'silence');
-assert.equal(gradeBar([OPEN, OPEN, OPEN], 'G'), 'miss', 'open strings');
+// one bar's verdict: very forgiving. One moment that sounds roughly like the chord is enough;
+// only silence, or nothing near the chord all bar, is a miss.
+assert.equal(gradeBar([0.2, 0.3, PASS_SCORE, 0.1]), 'hit', 'one good moment');
+assert.equal(gradeBar([null, null, 0.9]), 'hit');
+assert.equal(gradeBar([0.1, 0.3, PASS_SCORE - 0.01]), 'miss', 'never near the chord');
+assert.equal(gradeBar([null, null]), 'miss', 'silence');
+assert.equal(gradeBar([]), 'miss', 'nothing heard at all');
+assert.equal(gradeBar([0.6], 0.75), 'miss', 'the pass mark can be raised');
+// the score the page feeds in: the sound against the one wanted chord. The chord itself, even
+// with a string missing or an extra open one, passes easily.
+const likeness = (sound, want) => matchChord(sound, { [want]: CHORDS[want] }).score;
+for (const c of chords) assert.ok(likeness(template(CHORDS[c]), c) > 0.99, c);
+assert.ok(likeness(template(CHORDS.G, [1, 2, 3, 4]), 'G') >= PASS_SCORE, 'G with the outer strings missed');
+assert.ok(likeness(template('x02010'), 'Am') >= PASS_SCORE, 'A minor with a finger off');
 
 // a lesson: bars at the planned times until the robot reports its own
 const l = new Lesson({ title: 't', chords: ['G', 'C', 'D'], barMs: 1000, startAt: 5000 });
@@ -70,16 +77,20 @@ assert.equal(l.barStart(2), 9300);
 l.onBar(7, 1, 1);  // a bar past the end changes nothing
 assert.equal(l.endAt, 11300);
 
-// hearing: the first part of a bar is the change and doesn't count; verdicts come at the bar's end
-l.hear(5250, 'C');  // still settling
-for (const t of [5600, 6000, 6400]) l.hear(t, 'G');
+// hearing: each reading goes to the bar being played; verdicts come at the bar's end
+assert.equal(l.chordAt(5100), null, 'before the first bar');
+assert.equal(l.chordAt(5300), 'G');
+assert.equal(l.chordAt(7400), 'C');
+l.hear(5250, 0.2);
+assert.equal(l.look(0), null);
+l.hear(5600, 0.8);
 assert.equal(l.look(0), 'hit', 'already won before the bar is over');
 assert.equal(l.grades[0], null);
-for (const t of [7700, 8000, 8400]) l.hear(t, 'G');  // bar 1 wants C
+for (const t of [7700, 8000, 8400]) l.hear(t, t === 8000 ? null : 0.3);  // bar 1: never near its chord
 assert.equal(l.look(1), null);
 l.settle(9300);
 assert.deepEqual(l.grades, ['hit', 'miss', null]);
-l.hear(7800, 'C');  // too late: bar 1 has its verdict
+l.hear(7800, 0.9);  // too late: bar 1 has its verdict
 assert.equal(l.grades[1], 'miss');
 l.finish(11300);
 assert.deepEqual(l.grades, ['hit', 'miss', 'miss']);

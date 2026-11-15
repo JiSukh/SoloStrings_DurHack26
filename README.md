@@ -50,8 +50,9 @@ listening when you go quiet (or on a second press). A double tap is still "next 
 
 "Teach me Riptide" (or the Lesson card's buttons) loads the song, counts in, and has the robot
 strum it once through at 60 BPM (the knob's tempo if one is plugged in). The chords slide
-towards a line; you fret each one as it arrives, and the microphone marks the bar green (heard
-the right chord) or red. "Teach me random chords" does the same with eight basic chords.
+towards a line; you fret each one as it arrives, and the microphone marks the bar green or red.
+The marking is deliberately forgiving: a bar is green if the sound was roughly like its chord at
+any moment, red only if nothing was heard or it was far off (`PASS_SCORE` in `assets/lesson.js`). "Teach me random chords" does the same with eight basic chords.
 
 - Built-in songs (chords only, one per bar): `LESSONS` in `assets/lesson.js`.
 - Any other song ("teach me Wonderwall") is looked up with Gemini, limited to the strummer's

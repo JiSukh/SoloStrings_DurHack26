@@ -6,17 +6,19 @@
 export const BASIC = ['G', 'C', 'D', 'Em', 'Am', 'E', 'A', 'Dm'];
 
 // Songs the page carries: one chord per bar, in easy keys, chords only. `match` runs on
-// voice.js's normalised text (lower case, no punctuation). Any other song is looked up
-// with Gemini (gemini.js) when the board has a key.
+// voice.js's normalised text (lower case, no punctuation). `pattern` = the strum the robot
+// uses (a name from music.py's PATTERNS; plain "Strum" when left out). Any other song is
+// looked up with Gemini (gemini.js) when the board has a key.
+const times = (n, chords) => Array.from({ length: n }, () => chords).flat();
 export const LESSONS = [
-  { name: 'Riptide', match: /\brip ?tide\b/, chords: ['Am', 'G', 'C', 'C', 'Am', 'G', 'C', 'C'] },
+  // A minor one bar, G one bar, C two bars, round and round for the whole song
+  { name: 'Riptide', match: /\brip ?tide\b/, pattern: 'Riptide', chords: times(4, ['Am', 'G', 'C', 'C']) },
   { name: 'Knockin’ on Heaven’s Door', match: /\bknockin|\bheavens? s? ?door\b/, chords: ['G', 'D', 'Am', 'Am', 'G', 'D', 'C', 'C'] },
   { name: 'Stand by Me', match: /\bstand by me\b/, chords: ['G', 'G', 'Em', 'Em', 'C', 'D', 'G', 'G'] },
   { name: 'Twelve bar blues', match: /\b12 bar\b|\bblues\b/, chords: ['A7', 'A7', 'A7', 'A7', 'D7', 'D7', 'A7', 'A7', 'E7', 'D7', 'A7', 'E7'] },
 ];
 
 export const MAX_LESSON_BARS = 32;
-export const OPEN = '(open)';  // what an unfretted strum is called by the ear; never a right answer
 
 // n chords from `pool`, never the same one twice in a row (a change is the thing to practise).
 export function randomChords(n = 8, pool = BASIC, rng = Math.random) {
@@ -40,22 +42,17 @@ export function cleanProgression(list, known, max = MAX_LESSON_BARS) {
   return kept.slice(0, max);
 }
 
-// The shapes the ear chooses between during a lesson: the lesson's own chords, the basic
-// ones (so a wrong chord is heard as wrong) and the open strings (so not fretting at all is too).
-export function earShapes(chords, shapes) {
-  const out = { [OPEN]: '000000' };
-  for (const c of [...BASIC, ...chords]) if (shapes[c]) out[c] = shapes[c];
-  return out;
-}
+// How alike the sound and the wanted chord must be, at any one moment of the bar, for the bar
+// to count (0..1: listen.js's matchChord score for that chord alone). 0.5 is very forgiving:
+// a guitar that is roughly in tune and roughly on the chord passes, and a bar is only red when
+// nothing was heard or the sound was far off. Raise it (0.75 is strict) to make lessons harder.
+export const PASS_SCORE = 0.5;
 
-// One bar's verdict from what the ear heard in it (chord names; null = nothing clear):
-// the right chord at least twice, and at least half of everything that was clear.
-export function gradeBar(readings, expected) {
-  const clear = readings.filter(Boolean), right = clear.filter(c => c === expected).length;
-  return right >= 2 && right * 2 >= clear.length ? 'hit' : 'miss';
+// One bar's verdict from what the ear heard in it: the likeness to the wanted chord at each
+// reading (null = too quiet to tell). One good moment is enough.
+export function gradeBar(scores, pass = PASS_SCORE) {
+  return scores.some(x => x !== null && x >= pass) ? 'hit' : 'miss';
 }
-
-const SETTLE = 0.15;  // the start of a bar is the chord change (and the last chord still ringing)
 
 // One run through a song. Times are page milliseconds (performance.now()).
 export class Lesson {
@@ -95,23 +92,29 @@ export class Lesson {
     return -1;
   }
 
-  // The ear heard `chord` (or null: too quiet / unclear) at time t.
-  hear(t, chord) {
+  // The chord wanted at time t, or null between bars.
+  chordAt(t) {
     const i = this.barAt(t);
-    if (i < 0 || this.grades[i] || t < this.barStart(i) + SETTLE * this.barMs) return;
-    this.readings[i].push(chord);
+    return i < 0 ? null : this.chords[i];
+  }
+
+  // At time t the sound was `score` like the chord wanted then (null: too quiet to tell).
+  hear(t, score) {
+    const i = this.barAt(t);
+    if (i < 0 || this.grades[i]) return;
+    this.readings[i].push(score);
   }
 
   // Give every bar that is over by t its verdict.
   settle(t) {
     for (let i = 0; i < this.chords.length; i++) {
-      if (!this.grades[i] && t >= this.barStart(i) + this.barMs) this.grades[i] = gradeBar(this.readings[i], this.chords[i]);
+      if (!this.grades[i] && t >= this.barStart(i) + this.barMs) this.grades[i] = gradeBar(this.readings[i]);
     }
   }
 
   // 'hit' | 'miss' once over; before that 'hit' as soon as the bar is already won, else null.
   look(i) {
-    return this.grades[i] || (gradeBar(this.readings[i], this.chords[i]) === 'hit' ? 'hit' : null);
+    return this.grades[i] || (gradeBar(this.readings[i]) === 'hit' ? 'hit' : null);
   }
 
   finish(t) {
