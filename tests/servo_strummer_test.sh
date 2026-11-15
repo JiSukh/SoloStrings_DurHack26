@@ -59,9 +59,26 @@ for name, prog in PROGRESSIONS.items():
     assert name in PATTERNS and all(c in CHORDS for c in prog), name
 assert [bar_chord("Riptide", None, i) for i in range(5)] == ["Am", "G", "C", "C", "Am"]
 assert bar_chord("Riptide", "D", 1) == "D" and bar_chord("Strum", None, 3) is None
+# a loaded song (voice / coach): one chord per bar; beats the pattern's own chords, loses to a chosen chord
+from patterns import parse_song, MAX_SONG_BARS
+song, err = parse_song("Am, G,C ,C")
+assert song == ["Am", "G", "C", "C"] and err is None
+assert [bar_chord("Strum", None, i, song) for i in range(5)] == ["Am", "G", "C", "C", "Am"]
+assert bar_chord("Riptide", None, 1, ["D", "A"]) == "A" and bar_chord("Strum", "E", 1, song) == "E"
+assert bar_chord("Riptide", None, 1, None) == "G" and bar_chord("Riptide", None, 1, []) == "G"
+assert parse_song("") == ([], None) and parse_song("Am,H")[0] is None and "H" in parse_song("Am,H")[1]
+assert parse_song(",".join(["C"] * (MAX_SONG_BARS + 1)))[0] is None
+# .env reader: comments, quotes and a missing file
+import os, tempfile
+from config import read_env
+with tempfile.TemporaryDirectory() as d:
+    with open(os.path.join(d, ".env"), "w") as f:
+        f.write("# note\nELEVENLABS_API_KEY = 'abc=123'\n\nOTHER=x\nbroken line\n")
+    assert read_env(os.path.join(d, ".env")) == {"ELEVENLABS_API_KEY": "abc=123", "OTHER": "x"}
+    assert read_env(os.path.join(d, "missing")) == {}
 # a down strum plucks low E first, an up strum high e first
 assert to_steps([("d", [0, 1, 2, 3, 4, 5], 1)], 60)[0][0] == 1
 assert to_steps([("u", [0, 1, 2, 3, 4, 5], 1)], 60)[0][0] == 32
 PY
-if command -v node >/dev/null; then node tests/recognise_test.mjs; node tests/listen_test.mjs; node tests/twin_test.mjs; else echo "recognise_test, listen_test: skipped (no node)"; fi
+if command -v node >/dev/null; then node tests/recognise_test.mjs; node tests/listen_test.mjs; node tests/twin_test.mjs; node tests/voice_test.mjs; else echo "recognise_test, listen_test: skipped (no node)"; fi
 echo "servo_strummer_test: ok"
