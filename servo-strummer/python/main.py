@@ -81,15 +81,17 @@ def set_angles(string: int, a: int, b: int):
 
 def set_servos(on: bool):
     r = board.set_servos(on)
-    player.changed()
+    player.settings_changed()  # servos off mid-play: the player stops the board's sequencer
     return r
 
 
 def status():
-    # While idle, read the knob so the page shows it; while playing, the bar loop keeps it fresh.
-    ok, knob = board.idle_poll(player.state["chord"])
-    if ok:
-        player.set_knob_bpm(knob)
+    # While idle, read the knob so the page shows it; while playing, the bar loop keeps it fresh
+    # (and owns the LED matrix's chord).
+    if not player.state["playing"]:
+        ok, knob = board.idle_poll(player.state["chord"])
+        if ok:
+            player.set_knob_bpm(knob)
     return snapshot()
 
 
@@ -107,10 +109,14 @@ def stop_playing():
 
 
 def pluck(string: int):
+    if player.state["playing"]:  # the board plays bars by itself now, so the lock is free
+        return {"ok": False, "error": "stop the pattern first"}
     return board.pluck(string)
 
 
 def reset():
+    if player.state["playing"]:
+        return {"ok": False, "error": "stop the pattern first"}
     return board.reset()
 
 

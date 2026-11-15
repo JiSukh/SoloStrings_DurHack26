@@ -10,7 +10,9 @@ import types
 import unittest
 
 import _path  # noqa: F401
+from strummer import player as player_mod
 from strummer.board import Board
+from strummer.music import PATTERNS, encode_bar, parse_bar
 from strummer.player import Player
 
 
@@ -24,6 +26,69 @@ class FakeBridge:
     def call(self, name, *args, **kw):
         self.calls.append(name)
         return self.knob if name == "knob" else (0 if name == "knob_click" else True)
+
+
+class FakeMCU(FakeBridge):
+    """FakeBridge plus a sequencer that starts a bar every `bar_s` seconds. With notify=True it
+    calls the handlers Python provided (as Bridge.notify would); with provide_ok=False Python
+    can't register them, and with notify=False they are registered but never called. Either way
+    its "seq" state is there for the polling fallback."""
+
+    def __init__(self, notify=True, provide_ok=True, bar_s=0.08, knob=18):
+        super().__init__(knob)
+        self.notify, self.provide_ok, self.bar_s = notify, provide_ok, bar_s
+        self.handlers, self.queued, self.shown = {}, [], []
+        self.running, self.bar_no, self.bpm, self.gestures, self.last_gesture = False, -1, 0, 0, 0
+        self.halt = threading.Event()
+
+    def provide(self, name, fn):
+        if not self.provide_ok:
+            raise AttributeError("this Bridge can't provide")
+        self.handlers[name] = fn
+
+    def _emit(self, name, *args):
+        if self.notify and name in self.handlers:
+            self.handlers[name](*args)
+
+    def _run(self):
+        while self.running and not self.halt.is_set():
+            self.bar_no += 1
+            self._emit("bar", self.bar_no, self.bpm)
+            self.halt.wait(self.bar_s)
+
+    def gesture(self, g):
+        self.gestures += 1
+        self.last_gesture = g
+        self._emit("knob", g)
+
+    def knob_stop(self):  # knob turned to 0: the MCU stops at the beat and says so
+        self.running = False
+        self._emit("stopped", 0)
+
+    def call(self, name, *args, **kw):
+        self.calls.append(name)
+        if name == "queue":
+            parse_bar(args[0])  # must be a well-formed bar
+            self.queued.append(args[0])
+            return True
+        if name == "start":
+            self.bpm = self.knob * 5 if self.knob >= 0 else args[0]
+            if self.bpm <= 0:
+                return False
+            self.running, self.bar_no = True, -1
+            self.halt.clear()
+            threading.Thread(target=self._run, daemon=True).start()
+            return True
+        if name == "stop":
+            self.running = False
+            self.halt.set()
+            return True
+        if name == "seq":
+            return f"{int(self.running)} {self.bar_no} {self.bpm} {self.gestures} {self.last_gesture}"
+        if name == "show":
+            self.shown.append(args[0])
+        self.calls.pop()  # FakeBridge.call records it
+        return super().call(name, *args, **kw)
 
 
 def wait_for(cond, timeout=5.0):
@@ -96,6 +161,127 @@ class PlayerTest(unittest.TestCase):
             self.assertEqual(self.board.stats(), {"board": "busy"})
 
 
+class SequencerTest(unittest.TestCase):
+    """The player against a fake MCU sequencer: notify, polling fallback, re-queueing."""
+
+    def make(self, **kw):
+        self.mcu = FakeMCU(**kw)
+        self.board = Board(self.mcu)
+        self.bars, self.states = [], []
+        self.player = Player(self.board, on_bar=self.bars.append, on_state=lambda s: self.states.append(dict(s)))
+        return self.player
+
+    def tearDown(self):
+        self.player.stop_playing()
+        wait_for(lambda: self.player.state["playing"] is None)
+        self.mcu.halt.set()
+
+    def test_riptide_changes_chord_on_every_bar(self):
+        p = self.make()
+        self.assertFalse(p.polling)
+        self.assertTrue(p.play("Riptide")["ok"])
+        self.assertTrue(wait_for(lambda: len(self.bars) >= 5), "bars didn't arrive")
+        self.assertEqual([b["chord"] for b in self.bars[:5]], ["Am", "G", "C", "C", "Am"])
+        self.assertEqual([b["next"] for b in self.bars[:4]], ["G", "C", "C", "Am"])
+        self.assertEqual(self.mcu.shown[:4], ["Am", "G", "C", "Am"])  # the LED follows the bar (C, C sent once)
+        # one bar queued ahead: the first before start, then one per bar notification
+        self.assertEqual(self.mcu.queued[0], encode_bar(PATTERNS["Riptide"], "Am"))
+        self.assertEqual(self.mcu.queued[1], encode_bar(PATTERNS["Riptide"], "G"))
+        self.assertLess(self.mcu.calls.index("queue"), self.mcu.calls.index("start"))
+        self.assertEqual(self.player.state["knob_bpm"], 90)
+
+    def test_knob_press_switches_pattern_at_the_bar(self):
+        p = self.make(bar_s=0.3)
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        n = len(self.mcu.queued)
+        self.mcu.gesture(1)
+        self.assertTrue(wait_for(lambda: len(self.mcu.queued) > n))  # re-queued at once
+        self.assertEqual(p.state["playing"], "Down-up eighths")
+        self.assertEqual(self.mcu.queued[-1], encode_bar(PATTERNS["Down-up eighths"]))
+        self.mcu.gesture(-1)  # double tap: back
+        self.assertTrue(wait_for(lambda: p.state["playing"] == "Strum"))
+
+    def test_page_changes_requeue_the_waiting_bar(self):
+        p = self.make(bar_s=0.5)
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        p.set_chord("D")
+        self.assertTrue(wait_for(lambda: self.mcu.queued[-1] == encode_bar(PATTERNS["Strum"], "D")))
+        p.play("Boom-chick")
+        self.assertTrue(wait_for(lambda: self.mcu.queued[-1] == encode_bar(PATTERNS["Boom-chick"], "D")))
+        p.set_chord("")
+        p.set_song("E,A")  # a new song starts from its first chord
+        self.assertTrue(wait_for(lambda: self.mcu.queued[-1] == encode_bar(PATTERNS["Boom-chick"], "E")))
+
+    def test_stop(self):
+        p = self.make()
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        p.stop_playing()
+        self.assertTrue(wait_for(lambda: p.state["playing"] is None))
+        self.assertIn("stop", self.mcu.calls)
+        self.assertIsNone(self.states[-1]["playing"])
+        self.assertTrue(p.play("Strum")["ok"])  # and it starts again
+
+    def test_knob_at_zero(self):
+        p = self.make(knob=0)
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: p.state["playing"] is None))
+        self.assertNotIn("start", self.mcu.calls)
+        self.mcu.knob = 18
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        self.mcu.knob_stop()
+        self.assertTrue(wait_for(lambda: p.state["playing"] is None), "didn't stop when the MCU did")
+
+    def test_polls_when_the_bridge_cannot_provide(self):
+        p = self.make(provide_ok=False)
+        self.assertTrue(p.polling)
+        p.play("Riptide")
+        self.assertTrue(wait_for(lambda: len(self.bars) >= 3), "polling didn't see bars")
+        self.assertEqual([b["chord"] for b in self.bars[:3]], ["Am", "G", "C"])
+        self.mcu.gesture(1)
+        self.assertTrue(wait_for(lambda: p.state["playing"] != "Riptide"), "polling missed the knob press")
+        self.mcu.knob_stop()
+        self.assertTrue(wait_for(lambda: p.state["playing"] is None))
+
+    def test_falls_back_to_polling_when_notify_never_arrives(self):
+        old = player_mod.NOTIFY_WAIT_S
+        player_mod.NOTIFY_WAIT_S = 0.3
+        try:
+            p = self.make(notify=False)
+            self.assertFalse(p.polling)
+            p.play("Strum")
+            self.assertTrue(wait_for(lambda: len(self.bars) >= 2), "never fell back to polling")
+            self.assertTrue(p.polling)
+        finally:
+            player_mod.NOTIFY_WAIT_S = old
+
+    def test_debug_mode_mid_play_stops_the_board(self):
+        p = self.make()
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        self.board.set_servos(False)
+        p.settings_changed()
+        self.assertTrue(wait_for(lambda: "stop" in self.mcu.calls), "board kept moving the servos")
+        queued = len(self.mcu.queued)
+        n = len(self.bars)
+        self.assertTrue(wait_for(lambda: len(self.bars) > n + 1, 8), "bar time didn't carry on")
+        self.assertEqual(len(self.mcu.queued), queued)  # nothing more for the board
+        self.assertEqual(p.state["playing"], "Strum")
+
+    def test_status_and_angles_during_play_reach_the_board(self):
+        p = self.make()
+        p.play("Strum")
+        self.assertTrue(wait_for(lambda: self.bars))
+        for _ in range(50):
+            self.assertTrue(self.board.set_angles(2, 70, 120)["ok"])
+            self.assertNotEqual(self.board.stats(), {"board": "busy"})
+        self.assertGreaterEqual(self.mcu.calls.count("angles"), 50)
+        self.assertEqual(p.state["playing"], "Strum")
+
+
 class MainTest(unittest.TestCase):
     """main.py imported for real, with fake arduino modules."""
 
@@ -130,7 +316,7 @@ class MainTest(unittest.TestCase):
         time.sleep(0.3)
         main.stop_playing()
         self.assertTrue(wait_for(lambda: main.player.state["playing"] is None), "debug play didn't stop")
-        moving = {"play", "reset", "angles"}
+        moving = {"play", "reset", "angles", "queue", "start", "stop"}
         self.assertFalse(moving & set(calls), f"debug mode moved servos: {sorted(moving & set(calls))}")
         main.set_servos(True)
         # back on: angles resent, then the pluck
@@ -166,6 +352,16 @@ class MainTest(unittest.TestCase):
     def test_status_still_answers(self):
         s = self.main.status()
         self.assertTrue({"playing", "chord", "bpm", "knob_bpm", "bar", "song", "servos", "angles", "now"} <= set(s))
+
+    def test_pluck_and_reset_wait_for_stop(self):
+        main = self.main
+        main.set_servos(False)
+        main.play("Strum")
+        self.assertTrue(wait_for(lambda: main.player.state["bar"]))
+        self.assertEqual(main.pluck(0)["error"], "stop the pattern first")
+        self.assertEqual(main.reset()["error"], "stop the pattern first")
+        main.stop_playing()
+        self.assertTrue(wait_for(lambda: main.player.state["playing"] is None))
 
     def test_routes_answer_as_before(self):
         main = self.main

@@ -126,6 +126,62 @@ class Board:
             self.lock.release()
         return (True, knob) if read else (False, None)
 
+    # --- the MCU sequencer (sketch/sequencer.h). Each call takes the lock for just that call:
+    # with short-interrupt pulses, messages mid-play are safe. ---
+
+    def _seq_call(self, name, *args, timeout=2):
+        if not self.lock.acquire(timeout=timeout):
+            raise TimeoutError(f"board busy for {name}")
+        try:
+            return self.bridge.call(name, *args, timeout=timeout)
+        finally:
+            self.lock.release()
+
+    def queue_bar(self, bar, bpm):
+        """The bar after the current one (or the first, before start_bars). Replaces any bar
+        still waiting; the board swaps it in at the bar line. bpm is used when no knob is in."""
+        return self._seq_call("queue", bar, bpm)
+
+    def start_bars(self, bpm):
+        return self._seq_call("start", bpm)
+
+    def stop_bars(self):
+        return self._seq_call("stop")
+
+    def seq_state(self):
+        """For when notifications don't arrive: (running, bar, bpm, gesture_count, last_gesture)."""
+        running, bar, bpm, count, gesture = (int(x) for x in str(self._seq_call("seq")).split())
+        return bool(running), bar, bpm, count, gesture
+
+    def knob_bpm_now(self):
+        """knob_bpm() with the lock taken here; None when it can't be read."""
+        if not self.lock.acquire(timeout=1):
+            return None
+        try:
+            return self.knob_bpm()
+        except Exception:
+            return None
+        finally:
+            self.lock.release()
+
+    def show_chord_now(self, chord):
+        """show_chord() with the lock taken here."""
+        with self.lock:
+            self.show_chord(chord)
+
+    def send_angles_now(self):
+        with self.lock:
+            self.send_angles()
+
+    def listen(self, name, handler):
+        """Have the board's Bridge.notify(name, ...) call handler. False if this Bridge can't."""
+        try:
+            self.bridge.provide(name, handler)
+            return True
+        except Exception as e:
+            print(f"Bridge.provide({name!r}) failed: {e!r}", flush=True)
+            return False
+
     def stats(self):
         # Only ask the board while nothing is playing: a message mid-pattern could be garbled.
         if not self.lock.acquire(blocking=False):
