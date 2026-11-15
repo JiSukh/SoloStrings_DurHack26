@@ -20,6 +20,8 @@ case $cmd in
 
   inbox) # what needs MY attention right now
     if [[ $me == "$DIRECTOR" ]]; then
+      echo "## Assigned to me"
+      gh issue list --assignee @me --state open --json number,title,assignees,labels --jq "$fmt"
       echo "## Questions / blockers from workers"
       gh issue list --search "is:open label:question,blocked" --json number,title,assignees,labels --jq "$fmt"
       echo "## PRs waiting for test + merge"
@@ -34,15 +36,17 @@ case $cmd in
     fi ;;
 
   watch) # one stdout line per new/changed inbox item; run under Claude Code's Monitor tool
+    # everyone: issues assigned to me; director also: worker questions/blockers and every PR
     if [[ $me == "$DIRECTOR" ]]; then iq="is:open label:question,blocked"; pq="is:open"
-    else iq="is:open assignee:@me"; pq="is:open author:@me"; fi
+    else iq=; pq="is:open author:@me"; fi
+    issues() { gh issue list --search "$1" --json number,title,labels,updatedAt \
+                 --jq '.[] | "issue #\(.number) [\([.labels[].name] | join(","))] \(.title) @\(.updatedAt)"'; }
     # shortcut: updatedAt also changes on your own actions, so you may get woken by yourself; filter by actor if noisy
     prev=
     while :; do
-      if cur=$( { gh issue list --search "$iq" --json number,title,labels,updatedAt \
-                    --jq '.[] | "issue #\(.number) [\([.labels[].name] | join(","))] \(.title) @\(.updatedAt)"'
+      if cur=$( { { [[ -z $iq ]] || issues "$iq"; } && issues "is:open assignee:@me" &&
                   gh pr list --search "$pq" --json number,title,reviewDecision,updatedAt \
-                    --jq '.[] | "pr #\(.number) [\(.reviewDecision)] \(.title) @\(.updatedAt)"'; } | sort ); then
+                    --jq '.[] | "pr #\(.number) [\(.reviewDecision)] \(.title) @\(.updatedAt)"'; } | sort -u ); then
         comm -13 <(echo "$prev") <(echo "$cur") | grep -v '^$' || true
         prev=$cur
       fi # on a network error keep the old snapshot and retry next tick

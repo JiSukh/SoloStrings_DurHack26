@@ -11,7 +11,9 @@ for bin in gh git; do
 echo "$bin \$*" >>"$log"
 [[ "\$*" == "api user --jq .login" ]] && echo "\${FAKE_LOGIN:-ShinKhantSoeMoe}"
 [[ "\$1 \$2" == "issue view" ]] && echo "Some task"
-if [[ "\$1 \$2" == "issue list" && -n "\${FAKE_WATCH:-}" ]]; then
+if [[ "\$1 \$2" == "issue list" && -n "\${FAKE_WATCH:-}" && "\$*" == *label:question* ]]; then
+  echo "issue #5 [question] q @t1"
+elif [[ "\$1 \$2" == "issue list" && -n "\${FAKE_WATCH:-}" ]]; then
   n=\$(( \$(cat "$tmp/n" 2>/dev/null || echo 0) + 1 )); echo \$n >"$tmp/n"
   cat "$tmp/issues.\$(( n < 2 ? n : 2 ))"
 fi
@@ -48,4 +50,10 @@ printf 'issue #1 [todo] a @t1\n' >"$tmp/issues.1"
 printf 'issue #1 [todo] a @t1\nissue #2 [todo] b @t1\n' >"$tmp/issues.2"
 out=$(PATH="$tmp:$PATH" FAKE_WATCH=1 BUS_POLL=0.1 timeout 1 "$root/scripts/bus.sh" watch || true)
 [[ $out == $'issue #1 [todo] a @t1\npr #9 [] p @t1\nissue #2 [todo] b @t1' ]] || fail "watch output was: $out"
+
+# director: woken by worker questions AND by tasks assigned to them (missed #14 before)
+echo 0 >"$tmp/n"
+out=$(PATH="$tmp:$PATH" FAKE_LOGIN=JiSukh FAKE_WATCH=1 BUS_POLL=0.1 timeout 1 "$root/scripts/bus.sh" watch || true)
+grep -qF "issue #5 [question]" <<<"$out" || fail "director watch missed a question: $out"
+grep -qF "issue #1 [todo]" <<<"$out" || fail "director watch missed an assigned task: $out"
 echo "bus_test: ok"
