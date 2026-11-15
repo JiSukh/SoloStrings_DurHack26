@@ -5,49 +5,368 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Servo Strummer</title>
   <style>
-    :root { --bg: #f6f5f2; --fg: #1d1d1b; --accent: #d9480f; --muted: #6b6b66; }
+    :root { --bg: #f6f5f2; --card: #fff; --fg: #1d1d1b; --accent: #d9480f; --muted: #6b6b66; --line: #dddbd4; --ok: #2b8a3e; }
     @media (prefers-color-scheme: dark) {
-      :root { --bg: #161615; --fg: #ecebe6; --accent: #ff7a3d; --muted: #9a9a93; }
+      :root { --bg: #161615; --card: #201f1d; --fg: #ecebe6; --accent: #ff7a3d; --muted: #9a9a93; --line: #34332f; --ok: #51cf66; }
     }
-    body {
-      margin: 0; min-height: 100vh; display: grid; place-items: center;
-      background: var(--bg); color: var(--fg);
-      font-family: system-ui, -apple-system, sans-serif;
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, -apple-system, sans-serif; }
+    main { max-width: 720px; margin: 0 auto; padding: 24px 16px 48px; }
+    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 16px; }
+    h2 { font-size: 1rem; font-weight: 600; margin: 28px 0 10px; }
+    .now { display: flex; gap: 12px; flex-wrap: wrap; }
+    .now div { flex: 1; min-width: 140px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+    .now small { display: block; color: var(--muted); font-size: .8rem; }
+    .now strong { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .grid button, .chips button {
+      padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
+      color: var(--fg); font: inherit; text-align: left; cursor: pointer;
     }
-    main { text-align: center; padding: 16px; }
-    h1 { font-size: 1.4rem; font-weight: 600; margin: 0 0 24px; }
-    button {
-      width: 200px; height: 200px; border-radius: 50%; border: none;
-      background: var(--accent); color: #fff; font-size: 1.6rem; font-weight: 700;
-      cursor: pointer; transition: transform .08s, opacity .2s;
+    .chips button { padding: 6px 12px; text-align: center; min-width: 52px; }
+    [aria-pressed="true"] { border-color: var(--accent) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+    .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    input[type=range] { flex: 1; min-width: 160px; accent-color: var(--accent); }
+    .controls { display: flex; gap: 10px; margin-top: 16px; }
+    .controls button, .btn {
+      padding: 14px 18px; border: none; border-radius: 12px; font: inherit; font-weight: 700; cursor: pointer;
+      background: var(--card); color: var(--fg); border: 1px solid var(--line);
     }
-    button:active { transform: scale(.96); }
-    button:disabled { opacity: .5; cursor: wait; }
-    button:focus-visible { outline: 3px solid var(--fg); outline-offset: 4px; }
-    p { color: var(--muted); min-height: 1.5em; margin-top: 20px; }
+    .controls button { flex: 1; }
+    .primary { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
+    select { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); color: var(--fg); font: inherit; }
+    .cam { position: relative; width: 100%; max-width: 640px; aspect-ratio: 4 / 3; background: #000; border-radius: 12px; overflow: hidden; }
+    .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    .muted { color: var(--muted); font-size: .9rem; }
+    #detected, .detected { font-weight: 700; color: var(--ok); }
+    #status { min-height: 1.4em; }
+    .twin { display: block; width: 100%; height: 220px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
   </style>
 </head>
 <body>
   <main>
     <h1>Servo Strummer</h1>
-    <button id="strum">Strum</button>
-    <p id="status" role="status"></p>
+
+    <div class="now">
+      <div><small>Chord</small><strong id="nowChord">All strings</strong></div>
+      <div><small>Tempo</small><strong id="nowBpm">–</strong> <small id="nowBpmSrc"></small></div>
+      <div><small>Playing</small><strong id="nowPlaying" style="font-size:1.1rem">–</strong></div>
+    </div>
+
+    <h2>Virtual guitar</h2>
+    <canvas id="twin" class="twin" aria-label="Virtual guitar: strings light up as they're plucked"></canvas>
+    <div class="row" style="margin-top:8px">
+      <button class="btn" id="simPlay">Play without robot</button>
+      <label><input type="checkbox" id="twinSound"> Sound</label>
+      <span class="muted">Mirrors the robot while it plays, string by string.</span>
+    </div>
+
+    <h2>Pattern</h2>
+    <div class="grid" id="patterns" role="group" aria-label="Pattern"></div>
+    <div class="controls">
+      <button id="play" class="primary">Play</button>
+      <button id="stop">Stop</button>
+    </div>
+    <p class="muted" id="status" role="status"></p>
+
+    <h2>Tempo</h2>
+    <div class="row">
+      <input type="range" id="bpm" min="30" max="200" value="90" aria-label="Tempo in BPM">
+      <span id="bpmValue">90 BPM</span>
+    </div>
+    <p class="muted" id="knobNote">The knob sets the tempo when it's plugged in; turn it to 0 to stop.</p>
+
+    <h2>Chord</h2>
+    <div class="chips" id="chords" role="group" aria-label="Chord"></div>
+
+    <h2>Chord by ear (microphone)</h2>
+    <p class="muted">Most reliable: the laptop listens to the strings and works out the chord from the notes ringing. Just fret the chord and let the robot strum; it follows within about a bar. No training needed.</p>
+    <div class="row">
+      <button class="btn primary" id="micStart">Start listening</button>
+      <span>Hearing: <span id="heard" class="detected">–</span></span>
+      <meter id="level" min="-100" max="-20" low="-70" optimum="-40" value="-100" aria-label="Microphone level" style="flex:1;min-width:120px"></meter>
+    </div>
+
+    <h2>Chord camera (left hand)</h2>
+    <p class="muted">Point the laptop camera at the fretboard. Teach each chord once: pick it, hold the shape, press Record. Then the detected chord is sent to the strummer automatically.</p>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn primary" id="camStart">Start camera</button>
+      <span>Detected: <span id="detected">–</span></span>
+    </div>
+    <div class="cam"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
+    <div class="row" style="margin-top:12px">
+      <select id="trainChord" aria-label="Chord to record"></select>
+      <button class="btn" id="record" disabled>Record 3 s</button>
+      <button class="btn" id="clear">Clear samples</button>
+    </div>
+    <p class="muted" id="samples"></p>
   </main>
-  <script>
-    const btn = document.getElementById('strum');
-    const status = document.getElementById('status');
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      status.textContent = 'Strumming…';
+
+  <script type="module">
+    import { features, buildIndex, knn } from './recognise.js';
+    import { chroma, matchChord, FMIN, FMAX } from './listen.js';
+    import { VirtualGuitar, barLength } from './twin.js';
+
+    const $ = id => document.getElementById(id);
+    const api = async (method, path, params) => {
+      const q = params ? '?' + new URLSearchParams(params) : '';
+      return (await fetch(path + q, { method })).json();
+    };
+    let selectedPattern = null, CHORDS = {}, playing = null, last = null;
+    const twin = new VirtualGuitar($('twin'));
+    let clockOffset = 0, mirrored = null, sim = null;  // sim = { next: ms, timer } while playing without the robot
+
+    // ---------- patterns, play, tempo ----------
+    function pressOnly(container, match) {
+      for (const b of container.children) b.setAttribute('aria-pressed', b.dataset.value === match);
+    }
+
+    $('play').onclick = async () => {
+      if (!selectedPattern) return;
+      stopSim();
+      const r = await api('POST', '/play', { pattern: selectedPattern });
+      $('status').textContent = !r.ok ? r.error : r.switched ? 'Switching at the next bar…' : '';
+      refresh();
+    };
+    $('stop').onclick = async () => { stopSim(); await api('POST', '/stop'); $('status').textContent = 'Stopping at the end of the bar…'; };
+    $('bpm').oninput = e => $('bpmValue').textContent = `${e.target.value} BPM`;
+    $('bpm').onchange = e => api('POST', '/tempo', { bpm: e.target.value });
+
+    async function refresh() {
       try {
-        const res = await fetch('/strum', { method: 'POST' });
-        const data = await res.json();
-        status.textContent = data.ok ? 'Done' : 'Still strumming, try again';
+        const t0 = performance.now();
+        const s = await api('GET', '/status');
+        clockOffset = s.now * 1000 - (t0 + performance.now()) / 2;  // board clock - page clock
+        last = s;
+        if (s.bar && s.bar.start !== mirrored) {  // the robot started a bar: mirror it
+          mirrored = s.bar.start;
+          twin.playBar(s.bar.steps, s.bar.start * 1000 - clockOffset - performance.now(), CHORDS[s.bar.chord] || null);
+        }
+        if (!s.playing && !sim) twin.shape = CHORDS[s.chord] || null;
+        $('nowChord').textContent = s.chord || 'All strings';
+        pressOnly($('chords'), s.chord || '');
+        const knob = s.knob_bpm !== null && s.knob_bpm !== undefined;
+        $('nowBpm').textContent = knob ? s.knob_bpm : s.bpm;
+        $('nowBpmSrc').textContent = knob ? 'knob' : 'slider';
+        $('bpm').disabled = knob;
+        playing = s.playing;
+        if (s.playing && s.playing !== selectedPattern) {  // the knob button switched it
+          selectedPattern = s.playing; pressOnly($('patterns'), s.playing);
+        }
+        $('nowPlaying').textContent = s.playing || '–';
+        $('play').textContent = s.playing ? 'Switch pattern' : 'Play';
+        const atZero = 'Knob is at 0: turn it up to play';
+        if (knob && s.knob_bpm === 0 && !s.playing) $('status').textContent = atZero;
+        else if ($('status').textContent === atZero) $('status').textContent = '';
+      } catch { $('status').textContent = 'Board not reachable'; }
+    }
+
+    // ---------- virtual guitar without the robot ----------
+    const bpmNow = () => last && last.knob_bpm !== null && last.knob_bpm !== undefined ? last.knob_bpm : (last ? last.bpm : 90);
+    async function simBar() {
+      if (!sim) return;
+      if (bpmNow() === 0) { stopSim(); $('status').textContent = 'Knob is at 0: turn it up to play'; return; }
+      const chord = last && last.chord || '';
+      const r = await api('GET', '/steps', { pattern: selectedPattern, bpm: bpmNow(), chord, bar_no: sim.bar++ });
+      if (!sim || !r.ok) return stopSim();
+      twin.playBar(r.steps, sim.next - performance.now(), CHORDS[r.chord] || null);  // r.chord: a song's own chord
+      sim.next += barLength(r.steps);
+      sim.timer = setTimeout(simBar, sim.next - performance.now() - 300);  // fetch the next bar just before
+    }
+    function stopSim() {
+      if (!sim) return;
+      clearTimeout(sim.timer); sim = null; twin.stop();
+      $('simPlay').textContent = 'Play without robot';
+    }
+    $('simPlay').onclick = () => {
+      if (sim) return stopSim();
+      if (playing) { $('status').textContent = 'The robot is playing: the virtual guitar is already mirroring it'; return; }
+      twin.sound = $('twinSound').checked = true; twin.audio();
+      sim = { next: performance.now() + 150, bar: 0 };
+      $('simPlay').textContent = 'Stop virtual guitar';
+      simBar();
+    };
+    $('twinSound').onchange = e => { twin.sound = e.target.checked; if (twin.sound) twin.audio(); };
+
+    // ---------- chords ----------
+    async function setChord(name) {
+      await api('POST', '/chord', { name });
+      refresh();
+    }
+
+    // Camera and microphone both vote: the chord changes only when `agree` of the last
+    // `size` readings say the same thing, so it doesn't flicker mid-change.
+    let sentChord = null;
+    function voter(size, agree) {
+      const history = [];
+      return chord => {
+        history.push(chord);
+        if (history.length > size) history.shift();
+        const counts = {};
+        for (const c of history) if (c) counts[c] = (counts[c] || 0) + 1;
+        const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+        if (top && top[1] >= agree && top[0] !== sentChord) { sentChord = top[0]; setChord(top[0]); }
+      };
+    }
+
+    // ---------- chord by ear (maths in listen.js) ----------
+    const FFT = 16384, GATE_DB = -70, MIN_SCORE = 0.85, MIN_MARGIN = 0.01;
+    const earVote = voter(10, 6);  // readings every 100 ms: 6 of the last 10 must agree
+    $('micStart').onclick = async () => {
+      $('micStart').disabled = true;
+      try {
+        // the browser's voice processing would filter out the very notes we want
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        const ctx = new AudioContext();
+        const an = ctx.createAnalyser();
+        an.fftSize = FFT; an.smoothingTimeConstant = 0.5;
+        ctx.createMediaStreamSource(stream).connect(an);
+        const db = new Float32Array(an.frequencyBinCount), binHz = ctx.sampleRate / FFT;
+        $('micStart').textContent = 'Listening';
+        setInterval(() => {
+          an.getFloatFrequencyData(db);
+          let peak = -Infinity;
+          for (let k = Math.ceil(FMIN / binHz); k <= FMAX / binHz; k++) peak = Math.max(peak, db[k]);
+          $('level').value = Math.max(-100, peak);
+          if (peak < GATE_DB) { $('heard').textContent = 'too quiet'; earVote(null); return; }
+          const r = matchChord(chroma(Array.from(db, d => 10 ** (d / 20)), ctx.sampleRate, FFT), CHORDS);
+          const sure = r && r.score >= MIN_SCORE && r.margin >= MIN_MARGIN;
+          $('heard').textContent = r ? `${r.chord} (${Math.round(r.score * 100)}%)${sure ? '' : '?'}` : '–';
+          earVote(sure ? r.chord : null);
+        }, 100);
       } catch (e) {
-        status.textContent = 'Board not reachable';
+        $('micStart').disabled = false;
+        $('heard').textContent = window.isSecureContext ? `mic error: ${e.message}` : 'mic needs http://localhost (use open.sh)';
       }
-      btn.disabled = false;
-    });
+    };
+
+    // ---------- camera chord recogniser (maths in recognise.js) ----------
+    const K = 9, MIN_SHARE = 0.6, MAX_SAMPLES = 400;
+    const camVote = voter(12, 8);
+    const STORE = 'servo-strummer-chord-samples-v2';  // v2 = knuckle-frame features; v1 samples don't fit
+    let samples = {};
+    try { samples = JSON.parse(localStorage.getItem(STORE)) || {}; } catch { samples = {}; }
+    const save = () => { try { localStorage.setItem(STORE, JSON.stringify(samples)); } catch {} };
+
+    let norm = null, zSamples = [];
+    function updateNorm() { ({ norm, zSamples } = buildIndex(samples)); }
+    const classify = f => knn(f, norm, zSamples, K);
+
+    function showSamples() {
+      const parts = Object.entries(samples).filter(([, l]) => l.length).map(([c, l]) => `${c}: ${l.length}`);
+      $('samples').textContent = parts.length ? `Recorded — ${parts.join(', ')}` : 'No chords recorded yet.';
+    }
+
+    let landmarker = null, recording = null;
+
+    $('camStart').onclick = async () => {
+      $('camStart').disabled = true;
+      $('detected').textContent = 'loading…';
+      try {
+        // loaded only now: it's large and comes from the internet, so the rest of the page never waits for it
+        const { FilesetResolver, HandLandmarker } = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs');
+        const vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+        landmarker = await HandLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task' },
+          runningMode: 'VIDEO', numHands: 1,
+        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        $('video').srcObject = stream;
+        await $('video').play();
+        $('record').disabled = false;
+        $('detected').textContent = '–';
+        requestAnimationFrame(loop);
+      } catch (e) {
+        $('camStart').disabled = false;
+        $('detected').textContent = window.isSecureContext ? `camera error: ${e.message}` : 'camera needs http://localhost (use open.sh)';
+      }
+    };
+
+    function draw(lm) {
+      const c = $('overlay'), v = $('video');
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      if (!lm) return;
+      ctx.fillStyle = '#ff7a3d';
+      for (const p of lm) { ctx.beginPath(); ctx.arc(p.x * c.width, p.y * c.height, 4, 0, 7); ctx.fill(); }
+    }
+
+    function loop() {
+      try { step(); } catch (e) { $('detected').textContent = `error: ${e.message}`; console.error(e); }
+      requestAnimationFrame(loop);  // keep going even if one frame fails
+    }
+
+    function step() {
+      const v = $('video');
+      if (v.readyState >= 2) {
+        const res = landmarker.detectForVideo(v, performance.now());
+        const lm = res.landmarks && res.landmarks[0];
+        draw(lm);
+        if (lm) {
+          const f = features(lm, v.videoWidth / v.videoHeight);
+          if (recording && performance.now() < recording.until) {
+            const list = (samples[recording.chord] ||= []);
+            if (list.length < MAX_SAMPLES) list.push(f);
+          }
+          const r = classify(f);
+          $('detected').textContent = r ? `${r.chord} (${Math.round(r.share * 100)}%)`
+            : zSamples.length ? 'not sure' : 'hand found: record chords first';
+          camVote(r && r.share >= MIN_SHARE ? r.chord : null);
+        } else {
+          $('detected').textContent = 'no hand';  // keep the last chord while the hand moves
+        }
+        if (recording && performance.now() >= recording.until) {
+          recording = null;
+          $('record').disabled = false;
+          $('record').textContent = 'Record 3 s';
+          save(); updateNorm(); showSamples();
+        }
+      }
+    }
+
+    $('record').onclick = () => {
+      recording = { chord: $('trainChord').value, until: performance.now() + 3000 };
+      $('record').disabled = true;
+      $('record').textContent = 'Recording…';
+    };
+    $('clear').onclick = () => {
+      if (!confirm('Delete all recorded chord samples?')) return;
+      samples = {}; save(); updateNorm(); showSamples();
+    };
+
+    // ---------- startup ----------
+    const { patterns } = await api('GET', '/patterns');
+    for (const name of patterns) {
+      const b = document.createElement('button');
+      b.textContent = name; b.dataset.value = name;
+      b.onclick = async () => {
+        selectedPattern = name; pressOnly($('patterns'), name);
+        if (playing) { await api('POST', '/play', { pattern: name }); refresh(); }  // switch at the next bar
+      };
+      $('patterns').append(b);
+    }
+    selectedPattern = patterns[0]; pressOnly($('patterns'), selectedPattern);
+
+    ({ chords: CHORDS } = await api('GET', '/chords'));
+    const none = document.createElement('button');
+    none.textContent = 'All'; none.dataset.value = ''; none.title = 'Every string';
+    none.onclick = () => setChord('');
+    $('chords').append(none);
+    for (const [name, shape] of Object.entries(CHORDS)) {
+      const b = document.createElement('button');
+      b.textContent = name; b.dataset.value = name; b.title = shape;
+      b.onclick = () => setChord(name);
+      $('chords').append(b);
+      $('trainChord').append(new Option(`${name}  (${shape})`, name));
+    }
+    updateNorm();
+    showSamples();
+    // poll fast while the robot plays, so the mirror catches each bar's first beat
+    (async function poll() { await refresh(); setTimeout(poll, playing ? 100 : 1000); })();
   </script>
 </body>
 </html>

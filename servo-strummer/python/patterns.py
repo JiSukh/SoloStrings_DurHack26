@@ -1,0 +1,171 @@
+"""Picking/strumming patterns, and encoding them for the sketch's "play" call.
+
+Strings: 0 = low E, 1 = A, 2 = D, 3 = G, 4 = B, 5 = high e.
+Each event is (kind, strings, beats):
+  "p"  pluck the strings together (a pinch if several)
+  "d"  strum down: strings plucked one after another, low to high
+  "u"  strum up: high to low
+  "r"  rest
+Every pluck flips that string's pick to the other side, like a real pick stroke.
+
+Plucks can name roles instead of strings: R = the chord's bass (root) string, R2 = the
+alternating bass. With a chord set, strums skip strings the chord mutes, and a pluck whose
+strings are all muted becomes a rest, so the timing never changes.
+"""
+
+import random
+
+ALL = [0, 1, 2, 3, 4, 5]
+R, R2 = "R", "R2"
+
+# Standard open shapes, low E to high e; x = string not played.
+CHORDS = {
+    "C": "x32010", "G": "320003", "D": "xx0232", "A": "x02220", "E": "022100",
+    "Am": "x02210", "Em": "022000", "Dm": "xx0231", "F": "133211", "Bm": "x24432",
+    "A7": "x02020", "B7": "x21202", "C7": "x32310", "D7": "xx0212", "E7": "020100",
+    "G7": "320001", "Fmaj7": "xx3210", "Cadd9": "x32033", "Asus2": "x02200", "Dsus4": "xx0233",
+}
+
+
+def chord_strings(chord):
+    """Strings the chord plays, low to high; every string when no chord is set."""
+    return [i for i, c in enumerate(CHORDS[chord]) if c != "x"] if chord else ALL
+
+
+def _voice(strings, allowed):
+    root = allowed[0]
+    alt = 2 if root == 0 else root + 1  # 6th-string roots alternate with the D string
+    out = []
+    for s in strings:
+        s = root if s == R else alt if s == R2 else s
+        if s in allowed and s not in out:
+            out.append(s)
+    return out
+
+
+TREBLE = [2, 3, 4, 5]
+FRAME_MS = 20          # sketch sends one servo frame every 20 ms, so times are multiples of this
+STRUM_GAP_MS = 20      # time between strings within one strum
+MAX_CHUNK = 200        # chars per Bridge message; the RPC buffer is 256 bytes incl. overhead
+
+
+def p(strings, beats):
+    return ("p", strings, beats)
+
+
+def d(strings, beats):
+    return ("d", strings, beats)
+
+
+def u(strings, beats):
+    return ("u", strings, beats)
+
+
+def r(beats):
+    return ("r", [], beats)
+
+
+BAR_BEATS = 4  # every pattern is one bar of 4/4, so switching and the knob land on bar lines
+
+PATTERNS = {
+    "Strum": [d(ALL, 1), u(ALL, 1)] * 2,
+    "Down-up eighths": [d(ALL, .5), u(ALL, .5)] * 4,
+    "Folk (D DU UDU)": [d(ALL, 1), d(ALL, .5), u(ALL, 1), u(ALL, .5), d(ALL, .5), u(ALL, .5)],
+    # Vance Joy's Riptide: the island strum (D, DU, UDU) over its chords, see PROGRESSIONS
+    "Riptide": [d(ALL, 1), d(ALL, .5), u(ALL, 1), u(ALL, .5), d(ALL, .5), u(ALL, .5)],
+    "Travis picking": [p([R, 5], .5), p([3], .5), p([R2], .5), p([4], .5),
+                       p([R], .5), p([3], .5), p([R2], .5), p([4], .5)],
+    "Arpeggio up": [p([s], 1 / 3) for s in ALL] * 2,  # triplets: two runs per bar
+    "Arpeggio down": [p([s], 1 / 3) for s in reversed(ALL)] * 2,
+    "Arpeggio up-down": [p([s], .5) for s in ALL + [4, 3]],
+    "Boom-chick": [p([R], 1), d(TREBLE, 1), p([R2], 1), d(TREBLE, 1)],
+    "Fingerstyle p-i-m-a": [p([R], .5), p([3], .5), p([4], .5), p([5], .5),
+                            p([R2], .5), p([3], .5), p([4], .5), p([5], .5)],
+    "Pinch pattern": [p([R, 5], 1), p([3], .5), p([4], .5), p([R2, 5], 1), p([3], .5), p([4], .5)],
+    "Reggae skank": [r(1), u([3, 4, 5], 1), r(1), u([3, 4, 5], 1)],
+    "Rock eighths (bass + chop)": [p([R], .5), d([3, 4, 5], .5)] * 4,
+    # 32nd-note cross-picking on all six strings: bass walks up under B/e, ~27 plucks a second
+    # at 200 BPM. Each string gets 4+ steps (160+ ms) between its own plucks, which is what an
+    # SG90 needs to swing back past the string. Strings the chord mutes become rests.
+    "Super-human (32nds)": [p([s], 1 / 8) for s in [0, 4, 1, 5, 2, 4, 3, 5]] * 4,
+}
+
+RANDOM = "Random"  # a new made-up bar every bar
+
+# Patterns that come with their song's chords, one per bar, used while no chord is chosen.
+PROGRESSIONS = {"Riptide": ["Am", "G", "C", "C"]}
+
+
+def bar_chord(name, chord, bar_no):
+    """The chord for bar `bar_no` of pattern `name`: the chosen one, else the song's own."""
+    if chord or name not in PROGRESSIONS:
+        return chord
+    prog = PROGRESSIONS[name]
+    return prog[bar_no % len(prog)]
+
+
+def random_bar(rng=random):
+    """One 4/4 bar of random plucks and strums, starting with the bass on beat one."""
+    events, left = [p([R], .5)], BAR_BEATS - .5
+    while left > 0:
+        beats = min(left, rng.choice([.25, .5, .5, 1]))
+        if beats >= .5 and rng.random() < .3:  # strums need >= half a beat to ripple across
+            events.append(rng.choice([d, u])(rng.choice([ALL, TREBLE]), beats))
+        else:
+            events.append(p(rng.choice([[R], [R2], [R, 5], [2], [3], [4], [5]]), beats))
+        left -= beats
+    return events
+
+
+def next_pattern(name, step=1):
+    """The pattern `step` places after `name` (-1 = before), wrapping round; for the knob button."""
+    names = list(PATTERNS) + [RANDOM]
+    return names[(names.index(name) + step) % len(names)]
+
+
+def bar(name, rng=random):
+    """The events for one bar of the named pattern."""
+    return random_bar(rng) if name == RANDOM else PATTERNS[name]
+
+
+def _frames(ms):
+    return max(FRAME_MS, round(ms / FRAME_MS) * FRAME_MS)
+
+
+def to_steps(pattern, bpm, chord=None):
+    """Pattern -> list of (string_mask, ms) for the chord's strings. A mask of 0 is a rest."""
+    beat_ms = 60000 / bpm
+    allowed = chord_strings(chord)
+    steps = []
+    for kind, strings, beats in pattern:
+        strings = _voice(strings, allowed)
+        total = beat_ms * beats
+        if kind in ("d", "u") and len(strings) > 1:
+            order = strings if kind == "d" else list(reversed(strings))
+            for s in order[:-1]:
+                steps.append((1 << s, STRUM_GAP_MS))
+            steps.append((1 << order[-1], _frames(total - STRUM_GAP_MS * (len(order) - 1))))
+        else:
+            mask = 0
+            for s in strings:
+                mask |= 1 << s
+            steps.append((mask, _frames(total)))
+    return steps
+
+
+def to_chunks(steps):
+    """Steps -> "mask:ms,mask:ms" strings, each short enough for one Bridge message."""
+    chunks, cur = [], ""
+    for mask, ms in steps:
+        tok = f"{mask}:{ms}"
+        if cur and len(cur) + 1 + len(tok) > MAX_CHUNK:
+            chunks.append(cur)
+            cur = ""
+        cur = f"{cur},{tok}" if cur else tok
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def chunk_ms(chunk):
+    return sum(int(t.split(":")[1]) for t in chunk.split(","))
