@@ -244,8 +244,7 @@
     import { VirtualGuitar, barLength } from './twin.js';
     import { parseCommand, spokenChord, chordHelp, keyterms } from './voice.js';
     import { transcribe, tts, Speaker, VoiceMic, DEFAULT_VOICE } from './eleven.js';
-    import { LESSONS, Lesson, LessonLane, randomChords, cleanProgression } from './lesson.js';
-    import { songChords } from './gemini.js';
+    import { LESSONS, Lesson, LessonLane, randomChords } from './lesson.js';
 
     const $ = id => document.getElementById(id);
     const api = async (method, path, params) => {
@@ -259,7 +258,6 @@
     let clockOffset = 0, mirrored = null, sim = null;  // sim = { next: ms, timer } while previewing without the robot
     let explaining = false;
     let secret = { enabled: false, key: '', voice_id: '' };  // filled from GET /config below
-    let gemini = { enabled: false, key: '', model: '' };     // same; optional
     const lane = new LessonLane($('lane'));
     lane.idle = 'Press Random chords, or say “teach me Riptide”.';
     let lesson = null, lessonTimers = [], talkCount = null;
@@ -490,7 +488,7 @@
 
     // ---------- voice (parsing in voice.js, ElevenLabs calls in eleven.js) ----------
     // The key lives in the board's secrets (see secrets.example.env); the page never asks for it or stores it.
-    try { const cfg = await api('GET', '/config'); secret = cfg.voice || secret; gemini = cfg.gemini || gemini; } catch {}
+    try { secret = (await api('GET', '/config')).voice || secret; } catch {}
     const voiceId = secret.voice_id || DEFAULT_VOICE;
     const chordNames = () => Object.keys(CHORDS);
     const speaker = new Speaker(), mic = new VoiceMic();
@@ -525,7 +523,7 @@
       return bpm;
     }
 
-    // ---------- lessons (logic and drawing in lesson.js, song look-up in gemini.js) ----------
+    // ---------- lessons (songs, timing, verdicts and drawing in lesson.js) ----------
     const LESSON_BPM = 60;  // slow enough to change chords; the knob overrides it when plugged in
     const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const l of LESSONS) $('lessonSong').append(new Option(l.name, l.name));
@@ -616,30 +614,10 @@
       $('lessonScore').textContent = '';
     }
 
-    // A song the page doesn't carry: ask Gemini once, then keep the answer in this browser so
-    // it is the same (and instant) next time.
-    async function lookUpSong(query) {
-      const id = `lesson:${query}`;
-      try { const saved = JSON.parse(localStorage.getItem(id)); if (saved) return saved; } catch {}
-      if (!gemini.enabled) return null;
-      did(`Looking up ${query}…`);
-      const found = await songChords(gemini.key, gemini.model, query, chordNames());
-      const chords = found && cleanProgression(found.chords, chordNames());
-      if (!chords) return null;
-      const song = { name: found.title, chords };
-      try { localStorage.setItem(id, JSON.stringify(song)); } catch {}
-      return song;
-    }
-
     async function teach(cmd) {
-      let song = cmd.song ? LESSONS.find(l => l.name === cmd.song) : null;
-      if (cmd.query) {
-        song = await lookUpSong(cmd.query);
-        if (!song) {
-          return gemini.enabled ? `I couldn't find chords I can play for ${cmd.query}. Try Riptide, or say random chords.`
-            : `I only know ${LESSONS.map(l => l.name).join(', ')}. Add a Gemini key on the board to learn other songs.`;
-        }
-      }
+      const song = cmd.song ? LESSONS.find(l => l.name === cmd.song) : null;
+      // a song the page doesn't carry (see LESSONS in lesson.js)
+      if (cmd.query) return `I don't know ${cmd.query} yet. I can teach ${LESSONS.map(l => l.name).join(', ')}, or random chords.`;
       const title = song ? song.name : 'Random chords', chords = song ? song.chords : randomChords(8);
       const spoken = secret.enabled && $('speakReplies').checked;
       const error = await startLesson({ title, chords, pattern: song?.pattern }, spoken ? 7000 : 4000);  // time for the reply to be said

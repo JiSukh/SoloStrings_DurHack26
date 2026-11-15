@@ -103,9 +103,7 @@ def config():
     from the browser and needs the key; the page is only reachable over the USB port forward
     (localhost), and the key is never typed into or stored by the browser."""
     key = SECRETS.get("ELEVENLABS_API_KEY", "")
-    gemini = SECRETS.get("GEMINI_API_KEY", "")  # optional: chords for songs the page doesn't carry
-    return {"voice": {"enabled": bool(key), "key": key, "voice_id": SECRETS.get("ELEVENLABS_VOICE_ID", "")},
-            "gemini": {"enabled": bool(gemini), "key": gemini, "model": SECRETS.get("GEMINI_MODEL", "")}}
+    return {"voice": {"enabled": bool(key), "key": key, "voice_id": SECRETS.get("ELEVENLABS_VOICE_ID", "")}}
 
 
 def play(pattern: str):

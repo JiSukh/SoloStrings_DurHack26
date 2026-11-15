@@ -7,8 +7,8 @@ export const BASIC = ['G', 'C', 'D', 'Em', 'Am', 'E', 'A', 'Dm'];
 
 // Songs the page carries: one chord per bar, in easy keys, chords only. `match` runs on
 // voice.js's normalised text (lower case, no punctuation). `pattern` = the strum the robot
-// uses (a name from music.py's PATTERNS; plain "Strum" when left out). Any other song is
-// looked up with Gemini (gemini.js) when the board has a key.
+// uses (a name from music.py's PATTERNS; plain "Strum" when left out). To add a song, add a
+// line here: its chords must be in music.py's CHORDS, at most MAX_LESSON_BARS of them.
 const times = (n, chords) => Array.from({ length: n }, () => chords).flat();
 export const LESSONS = [
   // A minor one bar, G one bar, C two bars, round and round for the whole song
@@ -29,17 +29,6 @@ export function randomChords(n = 8, pool = BASIC, rng = Math.random) {
     out.push(c);
   }
   return out;
-}
-
-// A progression from outside (Gemini, a typed list) -> chords the strummer knows, or null if
-// too little of it survives to be the song. `known` = the strummer's chord names.
-export function cleanProgression(list, known, max = MAX_LESSON_BARS) {
-  if (!Array.isArray(list)) return null;
-  const byLower = Object.fromEntries(known.map(k => [k.toLowerCase(), k]));
-  const names = list.map(c => byLower[String(c).trim().toLowerCase()]);
-  const kept = names.filter(Boolean);
-  if (kept.length < 4 || kept.length < names.length * 0.75 || new Set(kept).size < 2) return null;
-  return kept.slice(0, max);
 }
 
 // How alike the sound and the wanted chord must be, at any one moment of the bar, for the bar

@@ -56,11 +56,8 @@ towards a line; you fret each one as it arrives, and the microphone marks the ba
 During a lesson the "Chord by ear" readout shows how like the wanted chord the sound is; a bar
 goes green if that reaches 80% at any moment in it, else red (`PASS_SCORE` in `assets/lesson.js`). "Teach me random chords" does the same with eight basic chords.
 
-- Built-in songs (chords only, one per bar): `LESSONS` in `assets/lesson.js`.
-- Any other song ("teach me Wonderwall") is looked up with Gemini, limited to the strummer's
-  chords, and kept in the browser's localStorage so the second ask is instant and identical.
-  Needs `GEMINI_API_KEY` in the secrets file (optional `GEMINI_MODEL`); the call goes from the
-  browser, like ElevenLabs. Ask for the demo's songs once beforehand and check the chords.
+- The songs (chords only, one per bar) are `LESSONS` in `assets/lesson.js`; add a line there for a
+  new one. Asking for any other song gets a spoken list of the ones it knows.
 - In debug mode (servos off, Sound on) the virtual guitar plays the bars through the speakers,
   which is enough for the microphone to mark them: a full run with no guitar.
-Code: `assets/lesson.js` (songs, timing, verdicts, the lane), `assets/gemini.js` (song look-up).
+Code: `assets/lesson.js` (songs, timing, verdicts, the lane).

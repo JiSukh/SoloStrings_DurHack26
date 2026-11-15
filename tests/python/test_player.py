@@ -404,7 +404,6 @@ class MainTest(unittest.TestCase):
         self.assertTrue(main.set_tempo(100)["ok"])
         self.assertTrue(main.steps("Strum")["ok"])
         self.assertEqual(set(main.config()["voice"]), {"enabled", "key", "voice_id"})
-        self.assertEqual(set(main.config()["gemini"]), {"enabled", "key", "model"})
         self.assertIn("board", main.debug())
         self.assertFalse(main.pluck(7)["ok"])
 

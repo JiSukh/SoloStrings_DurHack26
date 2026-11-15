@@ -11,7 +11,7 @@ Files are KEY=value lines with # comments.
 import os
 from pathlib import Path
 
-SECRET_KEYS = ("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID", "GEMINI_API_KEY", "GEMINI_MODEL")
+SECRET_KEYS = ("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID")
 SECRETS_FILE = Path.home() / ".config" / "servo-strummer" / "secrets.env"
 
 

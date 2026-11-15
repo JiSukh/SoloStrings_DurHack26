@@ -1,9 +1,8 @@
 // lesson.js: the songs, the random warm-up, bar timing and the green/red verdicts; and the
 // "teach me ..." voice commands that start a lesson. Uses the real chord names from music.py.
-import { BASIC, LESSONS, MAX_LESSON_BARS, PASS_SCORE, randomChords, cleanProgression, gradeBar, Lesson } from '../servo-strummer/assets/lesson.js';
+import { BASIC, LESSONS, MAX_LESSON_BARS, PASS_SCORE, randomChords, gradeBar, Lesson } from '../servo-strummer/assets/lesson.js';
 import { matchChord, template } from '../servo-strummer/assets/listen.js';
 import { parseCommand, normalise } from '../servo-strummer/assets/voice.js';
-import { songPrompt } from '../servo-strummer/assets/gemini.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -37,15 +36,6 @@ for (let run = 0; run < 50; run++) {
 }
 let n = 0;
 assert.deepEqual(randomChords(4, ['G', 'C'], () => (n++ % 2) / 2), ['G', 'C', 'G', 'C']);
-
-// a progression from outside: unknown chords dropped, nonsense refused
-assert.deepEqual(cleanProgression(['em', ' G ', 'D', 'A7'], chords), ['Em', 'G', 'D', 'A7']);
-assert.deepEqual(cleanProgression(['Em', 'G', 'D', 'C', 'F#m7b5'], chords), ['Em', 'G', 'D', 'C']);
-assert.equal(cleanProgression(['Em', 'F#', 'Bb', 'G', 'C#'], chords), null, 'mostly unplayable');
-assert.equal(cleanProgression(['G', 'G', 'G', 'G'], chords), null, 'one chord is not a song');
-assert.equal(cleanProgression(['G', 'C'], chords), null, 'too short');
-assert.equal(cleanProgression('G C D', chords), null);
-assert.equal(cleanProgression(new Array(100).fill(0).map((_, i) => (i % 2 ? 'G' : 'C')), chords).length, MAX_LESSON_BARS);
 
 // one bar's verdict: one moment at 80% or more on the ear meter is enough; silence, or never
 // reaching it all bar, is a miss.
@@ -101,7 +91,7 @@ assert.deepEqual(l.grades, ['hit', 'miss', 'miss']);
 assert.deepEqual(l.score(), { hits: 1, total: 3 });
 assert.equal(l.endedAt, 11300);
 
-// "teach me ...": a carried song by name, any other song as a query, the warm-up, and chords still explained
+// "teach me ...": a carried song by name, any other song as a query (the coach says it doesn't know it), the warm-up, and chords still explained
 const cmd = text => parseCommand(text, { patterns, chords, lessons: LESSONS });
 assert.deepEqual(cmd('Teach me Riptide.'), { action: 'teach', song: 'Riptide' });
 assert.deepEqual(cmd('teach me this song, Riptide'), { action: 'teach', song: 'Riptide' });
@@ -120,9 +110,5 @@ assert.deepEqual(cmd('teach me a minor'), { action: 'explain', chord: 'Am' });
 assert.deepEqual(cmd('teach me how to play F'), { action: 'explain', chord: 'F' });
 assert.deepEqual(cmd('stop the lesson'), { action: 'stop' });
 assert.deepEqual(cmd('twelve bar blues').action, 'song', 'without "teach" it still just loads the song');
-
-// the Gemini prompt names the song and the only chords allowed
-const prompt = songPrompt('Wonderwall', chords);
-assert.ok(prompt.includes('"Wonderwall"') && chords.every(c => prompt.includes(c)));
 
 console.log('lesson_test: ok');
