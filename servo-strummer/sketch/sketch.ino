@@ -95,7 +95,8 @@ void pollKnob() {
 // -1 when no knob is plugged in.
 int readKnob() { return knobAddr ? knobPos : -1; }
 
-// 1 = pressed (next pattern), -1 = double-tapped (previous), 0 = nothing; each reported once.
+// 1 = pressed (Python: talk to the voice coach), -1 = double-tapped (Python: next pattern),
+// 0 = nothing; each reported once.
 int knobClick() {
   noInterrupts();
   if (singlePending && millis() - lastPressMs >= DOUBLE_MS) { singlePending = false; knobGesture = 1; }

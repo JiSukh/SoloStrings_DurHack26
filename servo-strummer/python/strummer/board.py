@@ -32,7 +32,7 @@ class Board:
         return pos * KNOB_BPM_STEP if pos >= 0 else None
 
     def knob_click(self):
-        """1 = press: next, -1 = double tap: back, 0 = nothing. Caller must hold `lock`."""
+        """1 = press: talk, -1 = double tap: next pattern, 0 = nothing. Caller must hold `lock`."""
         return self.bridge.call("knob_click", timeout=2)
 
     def servo_play(self, steps, timeout=10):
@@ -125,6 +125,18 @@ class Board:
         finally:
             self.lock.release()
         return (True, knob) if read else (False, None)
+
+    def idle_click(self):
+        """While nothing plays: the knob button's gesture since the last ask (see knob_click),
+        or 0 when there is none or the board is busy (never blocks)."""
+        if not self.lock.acquire(blocking=False):
+            return 0
+        try:
+            return int(self.knob_click() or 0)
+        except Exception:
+            return 0
+        finally:
+            self.lock.release()
 
     # --- the MCU sequencer (sketch/sequencer.h). Each call takes the lock for just that call:
     # with short-interrupt pulses, messages mid-play are safe. ---

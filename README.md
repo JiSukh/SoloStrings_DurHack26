@@ -41,3 +41,23 @@ Voice commands: hold the button (or space bar) and say "play Travis picking", "s
 "tempo ninety", "chord A minor", "how do I play F", "twelve bar blues", "chords G, D, E minor, C",
 "clear the song". While a song plays, the next chord is called out a beat early.
 Code: `assets/voice.js` (text -> command), `assets/eleven.js` (speech-to-text, text-to-speech, mic).
+
+The knob's button talks too: press it once (no holding), speak after the beep, and it stops
+listening when you go quiet (or on a second press). A double tap is still "next pattern";
+"previous pattern" is on the page and by voice only.
+
+## Lessons
+
+"Teach me Riptide" (or the Lesson card's buttons) loads the song, counts in, and has the robot
+strum it once through at 60 BPM (the knob's tempo if one is plugged in). The chords slide
+towards a line; you fret each one as it arrives, and the microphone marks the bar green (heard
+the right chord) or red. "Teach me random chords" does the same with eight basic chords.
+
+- Built-in songs (chords only, one per bar): `LESSONS` in `assets/lesson.js`.
+- Any other song ("teach me Wonderwall") is looked up with Gemini, limited to the strummer's
+  chords, and kept in the browser's localStorage so the second ask is instant and identical.
+  Needs `GEMINI_API_KEY` in the secrets file (optional `GEMINI_MODEL`); the call goes from the
+  browser, like ElevenLabs. Ask for the demo's songs once beforehand and check the chords.
+- In debug mode (servos off, Sound on) the virtual guitar plays the bars through the speakers,
+  which is enough for the microphone to mark them: a full run with no guitar.
+Code: `assets/lesson.js` (songs, timing, verdicts, the lane), `assets/gemini.js` (song look-up).
