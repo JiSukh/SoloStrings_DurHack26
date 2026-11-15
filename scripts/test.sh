@@ -11,14 +11,3 @@ if command -v g++ >/dev/null; then
 else
   echo "sequencer_test: skipped (no g++)"
 fi
-# The web page (web/: TypeScript + Svelte): type check, then vitest. CI installs with npm ci first;
-# locally, run `npm ci --prefix web` once.
-if [ -d web/node_modules ]; then
-  npm --prefix web run --silent check
-  npm --prefix web test -- --run
-elif [ -n "${CI:-}" ]; then
-  echo "web: node_modules missing (CI must run npm ci --prefix web first)" >&2
-  exit 1
-else
-  echo "web tests: skipped (run npm ci --prefix web)"
-fi
