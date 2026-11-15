@@ -47,20 +47,24 @@ assert.equal(cleanProgression(['G', 'C'], chords), null, 'too short');
 assert.equal(cleanProgression('G C D', chords), null);
 assert.equal(cleanProgression(new Array(100).fill(0).map((_, i) => (i % 2 ? 'G' : 'C')), chords).length, MAX_LESSON_BARS);
 
-// one bar's verdict: very forgiving. One moment that sounds roughly like the chord is enough;
-// only silence, or nothing near the chord all bar, is a miss.
+// one bar's verdict: one moment at 80% or more on the ear meter is enough; silence, or never
+// reaching it all bar, is a miss.
+assert.equal(PASS_SCORE, 0.8);
 assert.equal(gradeBar([0.2, 0.3, PASS_SCORE, 0.1]), 'hit', 'one good moment');
 assert.equal(gradeBar([null, null, 0.9]), 'hit');
 assert.equal(gradeBar([0.1, 0.3, PASS_SCORE - 0.01]), 'miss', 'never near the chord');
 assert.equal(gradeBar([null, null]), 'miss', 'silence');
 assert.equal(gradeBar([]), 'miss', 'nothing heard at all');
-assert.equal(gradeBar([0.6], 0.75), 'miss', 'the pass mark can be raised');
+assert.equal(gradeBar([0.79, 0.6, 0.5]), 'miss', '79% is not enough');
+assert.equal(gradeBar([0.6], 0.5), 'hit', 'the pass mark can be changed');
 // the score the page feeds in: the sound against the one wanted chord. The chord itself, even
-// with a string missing or an extra open one, passes easily.
+// with a couple of strings missed, passes; a different chord doesn't.
 const likeness = (sound, want) => matchChord(sound, { [want]: CHORDS[want] }).score;
 for (const c of chords) assert.ok(likeness(template(CHORDS[c]), c) > 0.99, c);
 assert.ok(likeness(template(CHORDS.G, [1, 2, 3, 4]), 'G') >= PASS_SCORE, 'G with the outer strings missed');
-assert.ok(likeness(template('x02010'), 'Am') >= PASS_SCORE, 'A minor with a finger off');
+assert.ok(likeness(template(CHORDS.Am, [2, 3, 4, 5]), 'Am') >= PASS_SCORE, 'A minor on the top four strings');
+assert.ok(likeness(template(CHORDS.D), 'G') < PASS_SCORE, 'D is not G');
+assert.ok(likeness(template(CHORDS.E), 'C') < PASS_SCORE, 'E is not C');
 
 // a lesson: bars at the planned times until the robot reports its own
 const l = new Lesson({ title: 't', chords: ['G', 'C', 'D'], barMs: 1000, startAt: 5000 });
@@ -83,7 +87,7 @@ assert.equal(l.chordAt(5300), 'G');
 assert.equal(l.chordAt(7400), 'C');
 l.hear(5250, 0.2);
 assert.equal(l.look(0), null);
-l.hear(5600, 0.8);
+l.hear(5600, 0.85);
 assert.equal(l.look(0), 'hit', 'already won before the bar is over');
 assert.equal(l.grades[0], null);
 for (const t of [7700, 8000, 8400]) l.hear(t, t === 8000 ? null : 0.3);  // bar 1: never near its chord

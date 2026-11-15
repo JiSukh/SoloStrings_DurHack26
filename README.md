@@ -17,6 +17,8 @@ How the Claudes coordinate is in [CLAUDE.md](CLAUDE.md). Tests: `scripts/test.sh
 
 The page is plain HTML/JS served by the App Lab `web_ui` brick from the UNO Q itself (no build step,
 no CDN, system fonts only), so it loads fast off the board over the USB forward (`servo-strummer/open.sh`).
+On a laptop screen everything fits one page without scrolling: now playing, the lesson lane and the
+guitar on the left; voice, chord by ear and the folded-away manual controls and setup on the right.
 Design: "Paper": warm cream, ink text, deep red accent, serif headings and numbers. All colours,
 radii and fonts are CSS variables in one `:root` block at the top of `assets/index.html`.
 
@@ -51,8 +53,8 @@ listening when you go quiet (or on a second press). A double tap is still "next 
 "Teach me Riptide" (or the Lesson card's buttons) loads the song, counts in, and has the robot
 strum it once through at 60 BPM (the knob's tempo if one is plugged in). The chords slide
 towards a line; you fret each one as it arrives, and the microphone marks the bar green or red.
-The marking is deliberately forgiving: a bar is green if the sound was roughly like its chord at
-any moment, red only if nothing was heard or it was far off (`PASS_SCORE` in `assets/lesson.js`). "Teach me random chords" does the same with eight basic chords.
+During a lesson the "Chord by ear" readout shows how like the wanted chord the sound is; a bar
+goes green if that reaches 80% at any moment in it, else red (`PASS_SCORE` in `assets/lesson.js`). "Teach me random chords" does the same with eight basic chords.
 
 - Built-in songs (chords only, one per bar): `LESSONS` in `assets/lesson.js`.
 - Any other song ("teach me Wonderwall") is looked up with Gemini, limited to the strummer's

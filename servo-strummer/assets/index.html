@@ -57,10 +57,10 @@
     .btn.live { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
     #status { min-height: 1.4em; margin: .6rem 0 0; }
 
-    .twin { display: block; width: 100%; height: 13rem; border-radius: var(--radius-sm); background: var(--soft); }
+    .stage { position: relative; height: 12rem; overflow: hidden; border-radius: var(--radius-sm); background: var(--soft); }
+    .twin, .lane { position: absolute; inset: 0; width: 100%; height: 100%; }  /* fills the stage whatever height it is given */
     .row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
-    .lane { display: block; width: 100%; height: 11rem; border-radius: var(--radius-sm); background: var(--soft); }
-    .row + .row, .twin + .row, .lane + .row { margin-top: .75rem; }
+    .row + .row, .stage + .row { margin-top: .75rem; }
     select { min-height: 2.75rem; padding: 0 .6rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--bg); font-size: 1rem; flex: 1; min-width: 8rem; }
     .check { display: inline-flex; align-items: center; gap: .45rem; min-height: 2.75rem; font-size: .92rem; }
     .check input { width: 1.1rem; height: 1.1rem; accent-color: var(--accent); }
@@ -97,6 +97,31 @@
     .calib label { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
     .calib input { min-width: 0; }
     @media (max-width: 36rem) { .calib { grid-template-columns: 1fr 1fr; } }
+
+    /* ---------- one page: on a laptop or bigger nothing scrolls. The left column shares the
+       height between the lesson and the guitar; the right column scrolls by itself only when
+       the folded sections are opened. Smaller screens keep the plain stacked page. ---------- */
+    @media (min-width: 56rem) and (min-height: 38rem) {
+      body { overflow: hidden; }
+      .wrap { height: 100dvh; max-width: 84rem; padding-bottom: 1rem; display: flex; flex-direction: column; }
+      header { padding: .7rem 0; }
+      .layout { flex: 1; min-height: 0; gap: .75rem; grid-template-columns: minmax(0, 1.75fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; }
+      .col { gap: .75rem; }
+      .card { padding: 1rem; }
+      .card h2 { margin-bottom: .6rem; }
+      main.col { display: flex; flex-direction: column; min-height: 0; }
+      .grow { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+      .grow .stage { flex: 1 1 0; height: auto; min-height: 5rem; }
+      .side { position: static; min-height: 0; overflow-y: auto; align-content: start; }
+      .nowbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1.25rem; align-items: center; }
+      .nowbar .now { margin: 0; }
+      .nowbar .now strong { font-size: clamp(1.3rem, 2.4vw, 1.9rem); }
+      .nowbar .now strong.small { font-size: 1.05rem; padding-top: .2rem; }
+      .nowbar .transport { grid-template-columns: auto auto; }
+      .nowbar #status { grid-column: 1 / -1; margin: 0; min-height: 0; }
+      .nowbar #status:not(:empty) { margin-top: .4rem; }
+      .log { margin-top: .6rem; }
+    }
   </style>
 </head>
 <body>
@@ -107,7 +132,7 @@
 
     <div class="layout">
       <main class="col">
-        <section class="card" aria-label="Now playing">
+        <section class="card nowbar" aria-label="Now playing">
           <div class="now">
             <div><span class="label">Chord</span><strong id="nowChord">All</strong></div>
             <div><span class="label">Tempo <span id="nowBpmSrc"></span></span><strong id="nowBpm">–</strong></div>
@@ -120,9 +145,9 @@
           <p class="muted" id="status" role="status"></p>
         </section>
 
-        <section class="card">
+        <section class="card grow">
           <h2>Lesson <span class="label" id="lessonTitle">play each chord as it reaches the line</span></h2>
-          <canvas id="lane" class="lane" aria-label="Lesson: chords slide to the line and turn green when you play them right, red when you don't"></canvas>
+          <div class="stage"><canvas id="lane" class="lane" aria-label="Lesson: chords slide to the line and turn green when you play them right, red when you don't"></canvas></div>
           <div class="row">
             <button class="btn primary" id="lessonRandom">Random chords</button>
             <select id="lessonSong" aria-label="Song to learn"></select>
@@ -132,34 +157,12 @@
           </div>
         </section>
 
-        <section class="card">
+        <section class="card grow">
           <h2>Guitar <span class="label">mirrors the robot</span></h2>
-          <canvas id="twin" class="twin" aria-label="Virtual guitar: strings light up as they're plucked"></canvas>
+          <div class="stage"><canvas id="twin" class="twin" aria-label="Virtual guitar: strings light up as they're plucked"></canvas></div>
           <div class="row">
             <button class="btn" id="simPlay">Preview without robot</button>
             <label class="check"><input type="checkbox" id="twinSound"> Sound</label>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Pattern</h2>
-          <div class="grid" id="patterns" role="group" aria-label="Pattern"></div>
-        </section>
-
-        <section class="card">
-          <h2>Tempo <span class="label" id="knobNote">knob overrides · 0 stops</span></h2>
-          <div class="row">
-            <input type="range" id="bpm" min="30" max="200" value="90" aria-label="Tempo in BPM">
-            <span class="bpm" id="bpmValue">90 BPM</span>
-          </div>
-        </section>
-
-        <section class="card">
-          <h2>Chord</h2>
-          <div class="chips" id="chords" role="group" aria-label="Chord"></div>
-          <div class="row song" id="songRow" hidden>
-            <span class="muted">Song</span><strong id="songNow"></strong>
-            <button class="btn" id="songClear" style="margin-left:auto">Clear</button>
           </div>
         </section>
       </main>
@@ -185,14 +188,37 @@
         </section>
 
         <section class="card">
-          <h2>Chord by ear</h2>
-          <p class="muted" style="margin:0 0 .75rem">Fret a chord and let the robot strum: it follows what it hears within a bar.</p>
+          <h2>Chord by ear <span class="heard" id="heard">–</span></h2>
           <div class="row">
-            <button class="btn" id="micStart">Start listening</button>
-            <span class="heard" id="heard">–</span>
+            <button class="btn" id="micStart" title="Fret a chord and let the robot strum: it follows what it hears within a bar. In a lesson it shows how close you are to the chord: 80% turns the bar green.">Start listening</button>
+            <meter id="level" min="-100" max="-20" low="-70" optimum="-40" value="-100" aria-label="Microphone level"></meter>
           </div>
-          <div class="row"><meter id="level" min="-100" max="-20" low="-70" optimum="-40" value="-100" aria-label="Microphone level"></meter></div>
         </section>
+
+        <details class="card">
+          <summary>Pattern, tempo &amp; chord</summary>
+          <div class="setup">
+            <div>
+              <h3>Pattern</h3>
+              <div class="grid" id="patterns" role="group" aria-label="Pattern"></div>
+            </div>
+            <div>
+              <h3>Tempo <span class="label" id="knobNote">knob overrides · 0 stops</span></h3>
+              <div class="row">
+                <input type="range" id="bpm" min="30" max="200" value="90" aria-label="Tempo in BPM">
+                <span class="bpm" id="bpmValue">90 BPM</span>
+              </div>
+            </div>
+            <div>
+              <h3>Chord</h3>
+              <div class="chips" id="chords" role="group" aria-label="Chord"></div>
+              <div class="row song" id="songRow" hidden>
+                <span class="muted">Song</span><strong id="songNow"></strong>
+                <button class="btn" id="songClear" style="margin-left:auto">Clear</button>
+              </div>
+            </div>
+          </div>
+        </details>
 
         <details class="card">
           <summary>Setup &amp; calibration</summary>

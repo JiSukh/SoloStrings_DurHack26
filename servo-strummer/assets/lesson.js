@@ -43,10 +43,10 @@ export function cleanProgression(list, known, max = MAX_LESSON_BARS) {
 }
 
 // How alike the sound and the wanted chord must be, at any one moment of the bar, for the bar
-// to count (0..1: listen.js's matchChord score for that chord alone). 0.5 is very forgiving:
-// a guitar that is roughly in tune and roughly on the chord passes, and a bar is only red when
-// nothing was heard or the sound was far off. Raise it (0.75 is strict) to make lessons harder.
-export const PASS_SCORE = 0.5;
+// to count (0..1: listen.js's matchChord score for that chord alone). It is the percentage the
+// page's "Chord by ear" readout shows during a lesson: at 80% or more the bar goes green. A
+// similar chord can still reach it now and then; lower it to forgive more, raise it to forgive less.
+export const PASS_SCORE = 0.8;
 
 // One bar's verdict from what the ear heard in it: the likeness to the wanted chord at each
 // reading (null = too quiet to tell). One good moment is enough.
