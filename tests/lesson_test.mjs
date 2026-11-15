@@ -1,7 +1,8 @@
 // lesson.js: the songs, the random warm-up, bar timing and the green/red verdicts; and the
 // "teach me ..." voice commands that start a lesson. Uses the real chord names from music.py.
-import { BASIC, LESSONS, MAX_LESSON_BARS, PASS_SCORE, randomChords, gradeBar, Lesson } from '../servo-strummer/assets/lesson.js';
+import { BASIC, LESSONS, MAX_LESSON_BARS, PASS_SCORE, randomChords, gradeBar, tabOf, Lesson } from '../servo-strummer/assets/lesson.js';
 import { matchChord, template } from '../servo-strummer/assets/listen.js';
+import { chimeNotes } from '../servo-strummer/assets/fx.js';
 import { parseCommand, normalise } from '../servo-strummer/assets/voice.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
@@ -26,6 +27,22 @@ const riptide = LESSONS.find(l => l.name === 'Riptide');
 assert.equal(riptide.chords.length % 4, 0);
 riptide.chords.forEach((c, i) => assert.equal(c, ['Am', 'G', 'C', 'C'][i % 4], `Riptide bar ${i + 1}`));
 assert.ok(riptide.chords.length >= 16, 'Riptide goes round more than twice');
+
+// the list has songs and fingerstyle lessons, and a fingerstyle one picks single strings
+assert.deepEqual([...new Set(LESSONS.map(l => l.kind))], ['Songs', 'Fingerstyle']);
+assert.ok(LESSONS.filter(l => l.kind === 'Fingerstyle').length >= 3);
+assert.equal(new Set(LESSONS.map(l => l.name)).size, LESSONS.length, 'lesson names are unique');
+
+// a bar of steps -> tablature: where in the bar each pluck falls, and on which strings
+assert.deepEqual(tabOf([[1, 100], [0, 100], [48, 200]]), [{ f: 0, strings: [0] }, { f: 0.5, strings: [4, 5] }]);
+assert.deepEqual(tabOf([]), []);
+
+// the bell for a bar played right is that bar's own chord
+assert.deepEqual(chimeNotes('C'), [72, 76, 79]);
+assert.deepEqual(chimeNotes('Am'), [81, 84, 88]);
+assert.deepEqual(chimeNotes('Fmaj7'), [77, 81, 84], 'maj7 is a major chord');
+assert.deepEqual(chimeNotes('Dsus4'), [74, 79, 81]);
+for (const c of chords) assert.equal(chimeNotes(c).length, 3, c);
 
 // random warm-up: the right length, only from the pool, never the same chord twice running
 for (let run = 0; run < 50; run++) {
@@ -75,16 +92,20 @@ assert.equal(l.endAt, 11300);
 assert.equal(l.chordAt(5100), null, 'before the first bar');
 assert.equal(l.chordAt(5300), 'G');
 assert.equal(l.chordAt(7400), 'C');
-l.hear(5250, 0.2);
+assert.equal(l.hear(5250, 0.2), -1);
 assert.equal(l.look(0), null);
-l.hear(5600, 0.85);
+assert.equal(l.hear(5600, 0.85), 0, 'the reading that wins the bar says so, once');
+assert.equal(l.hear(5700, 0.95), -1);
 assert.equal(l.look(0), 'hit', 'already won before the bar is over');
 assert.equal(l.grades[0], null);
+assert.deepEqual(l.streak(), { now: 1, best: 1 });
 for (const t of [7700, 8000, 8400]) l.hear(t, t === 8000 ? null : 0.3);  // bar 1: never near its chord
 assert.equal(l.look(1), null);
-l.settle(9300);
+assert.deepEqual(l.settle(9300), [1], 'the bars that were just missed');
+assert.deepEqual(l.settle(9300), []);
 assert.deepEqual(l.grades, ['hit', 'miss', null]);
-l.hear(7800, 0.9);  // too late: bar 1 has its verdict
+assert.deepEqual(l.streak(), { now: 0, best: 1 });
+assert.equal(l.hear(7800, 0.9), -1);  // too late: bar 1 has its verdict
 assert.equal(l.grades[1], 'miss');
 l.finish(11300);
 assert.deepEqual(l.grades, ['hit', 'miss', 'miss']);
@@ -99,6 +120,11 @@ assert.deepEqual(cmd("Teach me Knockin' on Heaven's Door"), { action: 'teach', s
 assert.deepEqual(cmd('teach me knocking on heavens door'), { action: 'teach', song: 'Knockin’ on Heaven’s Door' });
 assert.deepEqual(cmd('I want to learn stand by me'), { action: 'teach', song: 'Stand by Me' });
 assert.deepEqual(cmd('teach me the twelve bar blues'), { action: 'teach', song: 'Twelve bar blues' });
+assert.deepEqual(cmd('teach me house of the rising sun'), { action: 'teach', song: 'House of the Rising Sun' });
+assert.deepEqual(cmd('teach me Travis picking'), { action: 'teach', song: 'Travis picking' });
+assert.deepEqual(cmd('I want to learn finger style'), { action: 'teach', song: 'Fingerpicking study' });
+assert.deepEqual(cmd('teach me arpeggios'), { action: 'teach', song: 'Arpeggio study' });
+assert.equal(cmd('play Travis picking').action, 'play', 'without "teach" it is still the pattern');
 assert.deepEqual(cmd('Teach me the song Wonderwall'), { action: 'teach', query: 'wonderwall' });
 assert.deepEqual(cmd('teach me how to play let it be'), { action: 'teach', query: 'let it be' });
 assert.deepEqual(cmd('learn hotel california on guitar'), { action: 'teach', query: 'hotel california' });

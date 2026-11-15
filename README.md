@@ -52,12 +52,16 @@ listening when you go quiet (or on a second press). A double tap is still "next 
 
 "Teach me Riptide" (or the Lesson card's buttons) loads the song, counts in, and has the robot
 strum it once through at 60 BPM (the knob's tempo if one is plugged in). The chords slide
-towards a line; you fret each one as it arrives, and the microphone marks the bar green or red.
+towards a line as tablature: a dot on each string the robot is about to pluck, with the fret your
+left hand holds on it, the chord's name above and its fingering beside the line. You fret each
+chord as it arrives, and the microphone marks the bar green or red. A bar played right rings a
+small bell (the chord itself), pulses the line and throws paper confetti; the end shows the score.
 During a lesson the "Chord by ear" readout shows how like the wanted chord the sound is; a bar
 goes green if that reaches 80% at any moment in it, else red (`PASS_SCORE` in `assets/lesson.js`). "Teach me random chords" does the same with eight basic chords.
 
-- The songs (chords only, one per bar) are `LESSONS` in `assets/lesson.js`; add a line there for a
-  new one. Asking for any other song gets a spoken list of the ones it knows.
+- The lessons (chords only, one per bar) are `LESSONS` in `assets/lesson.js`: songs, strummed, and
+  fingerstyle ones (House of the Rising Sun, Travis picking, arpeggios) where the robot picks single
+  strings. Add a line there for a new one. Asking for any other song gets a spoken list of the ones it knows.
 - In debug mode (servos off, Sound on) the virtual guitar plays the bars through the speakers,
   which is enough for the microphone to mark them: a full run with no guitar.
-Code: `assets/lesson.js` (songs, timing, verdicts, the lane).
+Code: `assets/lesson.js` (lessons, timing, verdicts, the lane), `assets/fx.js` (the sounds).

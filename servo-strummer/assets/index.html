@@ -57,6 +57,8 @@
     .btn.live { background: var(--ok); border-color: var(--ok); color: var(--on-accent); }
     #status { min-height: 1.4em; margin: .6rem 0 0; }
 
+    .lessoncard .stage { height: 16rem; }
+    @media (prefers-reduced-motion: reduce) { .grow { transition: none !important; } }
     .stage { position: relative; height: 12rem; overflow: hidden; border-radius: var(--radius-sm); background: var(--soft); }
     .twin, .lane { position: absolute; inset: 0; width: 100%; height: 100%; }  /* fills the stage whatever height it is given */
     .row { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
@@ -112,6 +114,10 @@
       main.col { display: flex; flex-direction: column; min-height: 0; }
       .grow { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
       .grow .stage { flex: 1 1 0; height: auto; min-height: 5rem; }
+      .grow { transition: flex-grow .45s ease; }
+      .lessoncard { flex-grow: 1.3; }
+      body.lesson-on .lessoncard { flex-grow: 1.9; }  /* a lesson is on: the lane takes the room */
+      body.lesson-on .guitarcard .row { display: none; }
       .side { position: static; min-height: 0; overflow-y: auto; align-content: start; }
       .nowbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1.25rem; align-items: center; }
       .nowbar .now { margin: 0; }
@@ -145,19 +151,20 @@
           <p class="muted" id="status" role="status"></p>
         </section>
 
-        <section class="card grow">
-          <h2>Lesson <span class="label" id="lessonTitle">play each chord as it reaches the line</span></h2>
-          <div class="stage"><canvas id="lane" class="lane" aria-label="Lesson: chords slide to the line and turn green when you play them right, red when you don't"></canvas></div>
+        <section class="card grow lessoncard">
+          <h2>Lesson <span class="label" id="lessonTitle">hold each chord as its notes reach the line</span></h2>
+          <div class="stage"><canvas id="lane" class="lane" aria-label="Lesson: the song scrolls to the line as tablature, each note marked with the fret to hold; a bar turns green when you play its chord right, red when you don't"></canvas></div>
           <div class="row">
             <button class="btn primary" id="lessonRandom">Random chords</button>
             <select id="lessonSong" aria-label="Song to learn"></select>
             <button class="btn" id="lessonStart">Teach me</button>
             <button class="btn" id="lessonStop" hidden>End lesson</button>
+            <label class="check"><input type="checkbox" id="lessonSound" checked> Sounds</label>
             <strong class="heard" id="lessonScore" role="status"></strong>
           </div>
         </section>
 
-        <section class="card grow">
+        <section class="card grow guitarcard">
           <h2>Guitar <span class="label">mirrors the robot</span></h2>
           <div class="stage"><canvas id="twin" class="twin" aria-label="Virtual guitar: strings light up as they're plucked"></canvas></div>
           <div class="row">
@@ -244,7 +251,8 @@
     import { VirtualGuitar, barLength } from './twin.js';
     import { parseCommand, spokenChord, chordHelp, keyterms } from './voice.js';
     import { transcribe, tts, Speaker, VoiceMic, DEFAULT_VOICE } from './eleven.js';
-    import { LESSONS, Lesson, LessonLane, randomChords } from './lesson.js';
+    import { LESSONS, Lesson, LessonLane, randomChords, tabOf } from './lesson.js';
+    import { Fx } from './fx.js';
 
     const $ = id => document.getElementById(id);
     const api = async (method, path, params) => {
@@ -260,6 +268,9 @@
     let secret = { enabled: false, key: '', voice_id: '' };  // filled from GET /config below
     const lane = new LessonLane($('lane'));
     lane.idle = 'Press Random chords, or say “teach me Riptide”.';
+    const fx = new Fx(() => twin.audio());  // the lesson's ticks and bells
+    lane.onCount = beatsLeft => fx.tick(beatsLeft);
+    $('lessonSound').onchange = e => { fx.on = e.target.checked; };
     let lesson = null, lessonTimers = [], talkCount = null;
     const lessonOn = () => !!lesson && lesson.endedAt === null;
 
@@ -526,13 +537,19 @@
     // ---------- lessons (songs, timing, verdicts and drawing in lesson.js) ----------
     const LESSON_BPM = 60;  // slow enough to change chords; the knob overrides it when plugged in
     const sleep = ms => new Promise(r => setTimeout(r, ms));
-    for (const l of LESSONS) $('lessonSong').append(new Option(l.name, l.name));
+    for (const kind of [...new Set(LESSONS.map(l => l.kind))]) {
+      const group = document.createElement('optgroup');
+      group.label = kind;
+      for (const l of LESSONS.filter(x => x.kind === kind)) group.append(new Option(l.name, l.name));
+      $('lessonSong').append(group);
+    }
 
     // Loads the chords as the board's song, counts in for `leadMs`, then has the robot strum
     // them once through. Returns '' when the lesson is on its way, else why it isn't.
     async function startLesson({ title, chords, pattern = 'Strum' }, leadMs = 4000) {
       endLesson();
       stopSim();
+      if (!patterns.includes(pattern)) pattern = patterns[0];
       if (playing) {  // a lesson starts from silence, with a count-in
         await api('POST', '/stop');
         for (let i = 0; i < 30 && playing; i++) { await sleep(100); await refresh(); }
@@ -547,14 +564,23 @@
       const bpm = bpmNow();
       if (!bpm) { await api('POST', '/song', { chords: '' }); return 'The knob is at zero. Turn it up, then ask again.'; }
       const barMs = 4 * 60000 / bpm;
-      const mine = lesson = new Lesson({ title, chords, barMs, startAt: performance.now() + Math.max(leadMs, barMs) });
+      // the tab: what the robot will pluck in a bar of each chord (the board makes its bars the same way)
+      const tabs = {};
+      await Promise.all([...new Set(chords)].map(async chord => {
+        try {
+          const bar = await api('GET', '/steps', { pattern, bpm, chord });
+          if (bar.ok) tabs[chord] = tabOf(bar.steps);
+        } catch {}  // no tab for this chord: its tile still shows
+      }));
+      const mine = lesson = new Lesson({ title, chords, barMs, tabs, startAt: performance.now() + Math.max(leadMs, barMs) });
+      document.body.classList.add('lesson-on');
+      try { twin.audio(); } catch {}  // wake the sound for the count-in ticks
       twin.shape = CHORDS[chords[0]];  // fingers ready on the first chord
       $('lessonTitle').textContent = title; $('lessonScore').textContent = ''; $('lessonStop').hidden = false;
       say(note);
       lane.show(lesson);
       lessonTimers.push(setTimeout(async () => {
         if (lesson !== mine) return;
-        if (!patterns.includes(pattern)) pattern = patterns[0];
         selectedPattern = pattern; pressOnly($('patterns'), pattern);
         const p = await api('POST', '/play', { pattern });
         if (lesson !== mine) return;
@@ -580,8 +606,9 @@
       const now = performance.now(), chord = lesson.chordAt(now);
       const r = heard && chord ? matchChord(heard, { [chord]: CHORDS[chord] }) : null;
       $('heard').textContent = !heard ? 'too quiet' : r ? `${chord} ${Math.round(r.score * 100)}%` : '–';
-      lesson.hear(now, r ? r.score : null);
-      lesson.settle(now);
+      const won = lesson.hear(now, r ? r.score : null);
+      if (won >= 0) fx.hit(lesson.chords[won], lesson.streak().now);  // the lane pulses; this is the bell
+      if (lesson.settle(now).length) fx.miss();
     }
 
     function lessonCleanUp() {
@@ -596,8 +623,10 @@
       if (!lessonOn()) return;
       lesson.finish(performance.now());
       lessonCleanUp();
-      lane.draw();
+      lane.show(lesson);  // the closing animation
       const { hits, total } = lesson.score();
+      fx.finish(lesson.chords[lesson.chords.length - 1], hits / total);
+      setTimeout(() => { if (!lessonOn()) document.body.classList.remove('lesson-on'); }, 4500);
       const text = `You got ${hits} of ${total} chords.${hits === total ? ' Perfect!' : hits >= total * 0.7 ? ' Nice work.' : ' Try it again.'}`;
       $('lessonScore').textContent = `${hits} / ${total}`;
       did(text);
@@ -610,7 +639,8 @@
       if (lessonOn()) lessonCleanUp();
       lesson = null;
       lane.show(null);
-      $('lessonTitle').textContent = 'play each chord as it reaches the line';
+      document.body.classList.remove('lesson-on');
+      $('lessonTitle').textContent = 'hold each chord as its notes reach the line';
       $('lessonScore').textContent = '';
     }
 
