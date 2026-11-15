@@ -380,7 +380,7 @@ class MainTest(unittest.TestCase):
         self.assertTrue(main.set_song("Am,G")["ok"] and main.set_song("")["song"] is None)
         self.assertTrue(main.set_tempo(100)["ok"])
         self.assertTrue(main.steps("Strum")["ok"])
-        self.assertIn("elevenlabs_key", main.config())
+        self.assertEqual(set(main.config()["voice"]), {"enabled", "key", "voice_id"})
         self.assertIn("board", main.debug())
         self.assertFalse(main.pluck(7)["ok"])
 

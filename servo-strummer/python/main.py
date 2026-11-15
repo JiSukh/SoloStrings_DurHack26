@@ -9,13 +9,13 @@ from arduino.app_utils import App, Bridge
 from arduino.app_bricks.web_ui import WebUI
 
 from strummer.board import Board
-from strummer.config import read_env
+from strummer.config import SECRETS_FILE, load_secrets
 from strummer.music import CHORDS, PATTERNS, RANDOM
 from strummer.player import Player
 from strummer.store import Store
 
 APP_DIR = Path(__file__).resolve().parent.parent  # servo-strummer/
-ENV = read_env(APP_DIR / ".env")  # servo-strummer/.env, not in git
+SECRETS = load_secrets([SECRETS_FILE, APP_DIR / ".env"])  # env vars, then secrets files; never in git
 KNOB_WATCH_S = 0.3  # how often an idle board's knob is read, so the page sees it move
 
 store = Store(os.environ.get("STRUMMER_DB") or APP_DIR / "data" / "strummer.db")
@@ -96,8 +96,11 @@ def status():
 
 
 def config():
-    # Settings the page needs from .env. The page is only reachable over the USB port forward.
-    return {"elevenlabs_key": ENV.get("ELEVENLABS_API_KEY", "")}
+    """What the page needs from the secrets. The board has no internet, so ElevenLabs is called
+    from the browser and needs the key; the page is only reachable over the USB port forward
+    (localhost), and the key is never typed into or stored by the browser."""
+    key = SECRETS.get("ELEVENLABS_API_KEY", "")
+    return {"voice": {"enabled": bool(key), "key": key, "voice_id": SECRETS.get("ELEVENLABS_VOICE_ID", "")}}
 
 
 def play(pattern: str):

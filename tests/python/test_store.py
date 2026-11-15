@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 import _path  # noqa: F401
-from strummer.config import read_env
+from strummer.config import load_secrets, read_env
 from strummer.store import Store
 
 
@@ -71,6 +71,16 @@ class EnvTest(unittest.TestCase):
                 f.write("# note\nELEVENLABS_API_KEY = 'abc=123'\n\nOTHER=x\nbroken line\n")
             self.assertEqual(read_env(os.path.join(d, ".env")), {"ELEVENLABS_API_KEY": "abc=123", "OTHER": "x"})
             self.assertEqual(read_env(os.path.join(d, "missing")), {})
+
+    def test_secrets_env_wins_then_first_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            a, b = os.path.join(d, "secrets.env"), os.path.join(d, ".env")
+            Path(a).write_text("ELEVENLABS_API_KEY=from-secrets" + chr(10))
+            Path(b).write_text(chr(10).join(["ELEVENLABS_API_KEY=from-dotenv", "ELEVENLABS_VOICE_ID=v1", "OTHER=x"]))
+            self.assertEqual(load_secrets([a, b], {}), {"ELEVENLABS_API_KEY": "from-secrets", "ELEVENLABS_VOICE_ID": "v1"})
+            self.assertEqual(load_secrets([a, b], {"ELEVENLABS_API_KEY": "from-env"})["ELEVENLABS_API_KEY"], "from-env")
+            self.assertEqual(load_secrets([a, b], {"ELEVENLABS_API_KEY": ""})["ELEVENLABS_API_KEY"], "from-secrets")
+            self.assertEqual(load_secrets([os.path.join(d, "missing")], {}), {})
 
 
 if __name__ == "__main__":

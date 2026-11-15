@@ -1,6 +1,6 @@
 // ElevenLabs from the browser: speech-to-text for commands, text-to-speech for replies, and
-// the microphone handling around them. The key stays in this browser (localStorage); the
-// board has no internet, so every call goes from the page straight to api.elevenlabs.io.
+// the microphone handling around them. The key comes from the board's secrets (GET /config);
+// the board has no internet, so every call goes from the page straight to api.elevenlabs.io.
 
 const API = 'https://api.elevenlabs.io';
 const STT_MODEL = 'scribe_v2';
@@ -139,37 +139,5 @@ export class VoiceMic {
       rec.onstop = () => resolve({ blob: new Blob(this.chunks, { type: rec.mimeType || 'audio/webm' }), ms });
       rec.stop();
     });
-  }
-}
-
-// Hands-free: finds stretches of speech by loudness. The quiet level is tracked all the time,
-// so in a loud room (or while the robot strums) the voice has to rise `gate` times above
-// whatever the room is doing. Call tick() every 50 ms with the level; it returns 'start',
-// 'end' or null.
-export class SpeechGate {
-  constructor() { this.floor = 0.01; this.above = 0; this.quiet = 0; this.open = false; this.ticks = 0; this.sum = 0; this.rest = 20; }
-
-  tick(level, gate) {
-    if (this.rest > 0) {  // just started or just finished a clip: relearn the room, quickly
-      this.rest--;
-      this.floor = Math.max(0.003, this.floor * 0.85 + level * 0.15);
-      return null;
-    }
-    const threshold = Math.max(this.floor * gate, 0.02);
-    if (!this.open) {
-      this.floor = Math.max(0.003, this.floor * 0.97 + level * 0.03);
-      this.above = level > threshold ? this.above + 1 : 0;
-      if (this.above >= 3) { this.open = true; this.quiet = 0; this.ticks = 0; this.sum = 0; this.above = 0; return 'start'; }
-      return null;
-    }
-    this.ticks++;
-    this.sum += level;
-    this.quiet = level > threshold * 0.6 ? 0 : this.quiet + 1;
-    if (this.quiet >= 14 || this.ticks >= 120) {  // 0.7 s of quiet, or 6 s at most
-      if (this.ticks >= 120) this.floor = this.sum / this.ticks;  // never went quiet: that was the room, not a voice
-      this.open = false; this.rest = 16;          // 0.8 s before listening again
-      return 'end';
-    }
-    return null;
   }
 }

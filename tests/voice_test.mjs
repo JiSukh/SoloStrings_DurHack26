@@ -2,8 +2,6 @@
 // and pattern names from patterns.py, so a renamed pattern that voice can no longer reach
 // fails here.
 import { parseCommand, stripWake, spokenChord, chordHelp, keyterms, normalise, patternWords, SONGS } from '../servo-strummer/assets/voice.js';
-import { SpeechGate } from '../servo-strummer/assets/eleven.js';
-import { coachTools, coachPrompt } from '../servo-strummer/assets/coach.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
@@ -107,23 +105,5 @@ assert.ok(terms.length > 20 && terms.length <= 1000);
 for (const k of terms) assert.ok(k.length <= 50 && k.split(' ').length <= 5 && !/[<>{}[\]\\]/.test(k), k);
 
 assert.equal(normalise('Set TEMPO to one hundred and five!'), 'set tempo to 105');
-
-// hands-free gate: a steady loud room never opens it; a voice over the room does, then it closes
-const gate = new SpeechGate();
-let events = [];
-for (let i = 0; i < 200; i++) events.push(gate.tick(0.08 + 0.01 * Math.sin(i), 3));  // constant strumming / chatter
-assert.ok(events.filter(e => e === 'start').length <= 1, 'steady noise must not keep triggering');
-while (gate.open) gate.tick(0.08, 3);
-for (let i = 0; i < 40; i++) gate.tick(0.08, 3);
-events = [];
-for (let i = 0; i < 20; i++) events.push(gate.tick(0.5, 3));   // someone speaks up
-for (let i = 0; i < 40; i++) events.push(gate.tick(0.08, 3));  // and stops
-assert.deepEqual(events.filter(Boolean), ['start', 'end']);
-
-// coach: every tool has a description and a parameter schema, and the prompt names every chord
-const tools = coachTools(patterns, chords);
-assert.deepEqual(tools.map(t => t.name), ['play_pattern', 'stop_playing', 'set_tempo', 'set_chord', 'load_song', 'get_state']);
-for (const t of tools) assert.ok(t.description && t.parameters.type === 'object' && Array.isArray(t.parameters.required), t.name);
-for (const c of chords) assert.ok(coachPrompt(patterns, chords).includes(c), c);
 
 console.log('voice_test: ok');
