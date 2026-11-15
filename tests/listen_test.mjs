@@ -5,9 +5,9 @@
 import { template, chroma, matchChord } from '../servo-strummer/assets/listen.js';
 import { readFileSync } from 'node:fs';
 
-const src = readFileSync(new URL('../servo-strummer/python/patterns.py', import.meta.url), 'utf8');
+const src = readFileSync(new URL('../servo-strummer/python/strummer/music.py', import.meta.url), 'utf8');
 const CHORDS = Object.fromEntries([...src.matchAll(/"([A-G][a-z0-9]*)": "([x0-9]{6})"/g)].map(m => [m[1], m[2]]));
-if (Object.keys(CHORDS).length < 20) throw new Error('could not read CHORDS from patterns.py');
+if (Object.keys(CHORDS).length < 20) throw new Error('could not read CHORDS from strummer/music.py');
 
 const SR = 48000, N = 16384, OPEN = [40, 45, 50, 55, 59, 64];
 let seed = 7;

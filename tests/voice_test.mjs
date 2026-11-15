@@ -7,11 +7,11 @@ import { coachTools, coachPrompt } from '../servo-strummer/assets/coach.js';
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
-const src = readFileSync(new URL('../servo-strummer/python/patterns.py', import.meta.url), 'utf8');
+const src = readFileSync(new URL('../servo-strummer/python/strummer/music.py', import.meta.url), 'utf8');
 const CHORDS = Object.fromEntries([...src.matchAll(/"([A-G][a-z0-9]*)": "([x0-9]{6})"/g)].map(m => [m[1], m[2]]));
 const patterns = [...src.matchAll(/^    "([^"]+)": \[/gm)].map(m => m[1]).concat('Random');
 const chords = Object.keys(CHORDS);
-assert.ok(chords.length >= 20 && patterns.length >= 14, 'could not read CHORDS / PATTERNS from patterns.py');
+assert.ok(chords.length >= 20 && patterns.length >= 14, 'could not read CHORDS / PATTERNS from strummer/music.py');
 const cmd = text => parseCommand(text, { patterns, chords });
 
 // every pattern can be asked for by its own name, with or without "play"
