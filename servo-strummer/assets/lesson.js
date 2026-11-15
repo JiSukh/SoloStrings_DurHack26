@@ -290,7 +290,8 @@ export class LessonLane {
     }
     g.globalAlpha = 1;
     // chord tiles along the top, one per bar
-    const shake = this.still ? 0 : Math.sin((now - this.shakeAt) / 18) * 5 * Math.max(0, 1 - (now - this.shakeAt) / 320);
+    const since = now - this.shakeAt;  // a missed bar shakes the tiles for a third of a second
+    const shake = this.still || since > 320 ? 0 : Math.sin(since / 18) * 5 * (1 - since / 320);
     l.chords.forEach((chord, i) => {
       const x = X(l.barStart(i)) + 3 + shake, tw = l.barMs * pxPerMs - 6;
       if (x > w || x + tw < hitX) return;

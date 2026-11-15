@@ -58,6 +58,8 @@
     #status { min-height: 1.4em; margin: .6rem 0 0; }
 
     .lessoncard .stage { height: 16rem; }
+    /* while a lesson runs, its card only offers what matters then: End lesson and Sounds */
+    body.lesson-on :is(#lessonRandom, #lessonSong, #lessonStart) { display: none; }
     @media (prefers-reduced-motion: reduce) { .grow { transition: none !important; } }
     .stage { position: relative; height: 12rem; overflow: hidden; border-radius: var(--radius-sm); background: var(--soft); }
     .twin, .lane { position: absolute; inset: 0; width: 100%; height: 100%; }  /* fills the stage whatever height it is given */
@@ -116,7 +118,7 @@
       .grow .stage { flex: 1 1 0; height: auto; min-height: 5rem; }
       .grow { transition: flex-grow .45s ease; }
       .lessoncard { flex-grow: 1.3; }
-      body.lesson-on .lessoncard { flex-grow: 1.9; }  /* a lesson is on: the lane takes the room */
+      body.lesson-on .lessoncard { flex-grow: 3; }  /* a lesson is on: the lane takes the room */
       body.lesson-on .guitarcard .row { display: none; }
       .side { position: static; min-height: 0; overflow-y: auto; align-content: start; }
       .nowbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 1.25rem; align-items: center; }
