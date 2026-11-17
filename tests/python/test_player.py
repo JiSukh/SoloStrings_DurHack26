@@ -1,9 +1,7 @@
-"""The bar loop and main.py's wiring, against a fake Bridge (no board, no Arduino packages)."""
+"""The bar loop and main.py, against a fake Bridge (no board, no Arduino packages)."""
 
 import importlib
-import os
 import sys
-import tempfile
 import threading
 import time
 import types
@@ -15,7 +13,7 @@ from strummer import player as player_mod
 # Names the sketch provides; Python can't provide a notification handler under any of them.
 import re
 from pathlib import Path
-_SKETCH = Path(__file__).resolve().parents[2] / "servo-strummer" / "sketch" / "sketch.ino"
+_SKETCH = Path(__file__).resolve().parents[2] / "solo-strings" / "sketch" / "sketch.ino"
 MCU_RPCS = set(re.findall(r'Bridge\.provide\("(\w+)"', _SKETCH.read_text()))
 assert "knob" in MCU_RPCS
 from strummer.board import Board
@@ -309,103 +307,70 @@ class SequencerTest(unittest.TestCase):
 
 
 class MainTest(unittest.TestCase):
-    """main.py imported for real, with fake arduino modules."""
+    """main.py imported for real, with a fake arduino module; its loop() is called by hand."""
 
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        os.environ["STRUMMER_DB"] = os.path.join(cls.tmp.name, "strummer.db")  # don't touch the real one
-        cls.bridge = FakeBridge()
-        cls.pushed = []
-        ui = types.SimpleNamespace(expose_api=lambda *a: None,
-                                   send_message=lambda kind, msg: cls.pushed.append((time.time(), kind, msg)))
-        app_utils = types.SimpleNamespace(App=types.SimpleNamespace(run=lambda: None), Bridge=cls.bridge)
-        web_ui = types.SimpleNamespace(WebUI=lambda: ui)
-        sys.modules.update({"arduino": types.ModuleType("arduino"), "arduino.app_utils": app_utils,
-                            "arduino.app_bricks": types.ModuleType("arduino.app_bricks"),
-                            "arduino.app_bricks.web_ui": web_ui})
+    def load(self, **mcu):
+        self.mcu = FakeMCU(bar_s=0.05, **mcu)
+        self.ran = []
+        app = types.SimpleNamespace(run=lambda user_loop=None: self.ran.append(user_loop))
+        sys.modules.update({"arduino": types.ModuleType("arduino"),
+                            "arduino.app_utils": types.SimpleNamespace(App=app, Bridge=self.mcu)})
         sys.modules.pop("main", None)
-        cls.main = importlib.import_module("main")
+        self.main = importlib.import_module("main")
+        return self.main
 
-    @classmethod
-    def tearDownClass(cls):
-        cls.main.store.close()
-        os.environ.pop("STRUMMER_DB", None)
-        cls.tmp.cleanup()
+    def tearDown(self):
+        self.main.player.stop_playing()
+        wait_for(lambda: self.main.player.state["playing"] is None)
+        self.mcu.halt.set()
 
-    def test_debug_mode_never_moves_servos(self):
-        # debug mode: with the servos off, nothing that moves them reaches the board, timing still runs
-        main, calls = self.main, self.bridge.calls
-        main.set_servos(False)
-        self.assertTrue(main.pluck(0)["ok"] and main.reset()["ok"] and main.set_angles(1, 70, 120)["ok"])
-        main.play("Strum")
-        time.sleep(0.3)
-        main.stop_playing()
-        self.assertTrue(wait_for(lambda: main.player.state["playing"] is None), "debug play didn't stop")
-        moving = {"play", "reset", "angles", "queue", "start", "stop"}
-        self.assertFalse(moving & set(calls), f"debug mode moved servos: {sorted(moving & set(calls))}")
-        main.set_servos(True)
-        # back on: angles resent, then the pluck
-        self.assertTrue(main.pluck(0)["ok"] and "play" in calls and "angles" in calls)
-        self.assertEqual(main.store.get("angles")[1], [70, 120])  # saved in sqlite
+    def test_starts_the_pattern_over_the_song(self):
+        main = self.load()
+        self.assertEqual(self.ran, [main.loop])  # the framework gets our loop
+        self.assertEqual(self.mcu.calls, [])     # nothing is sent to the board before the loop runs
+        main.loop()
+        self.assertEqual(main.player.state["playing"], main.PATTERN)
+        self.assertTrue(wait_for(lambda: len(self.mcu.queued) >= 2), "bars didn't reach the board")
+        self.assertEqual(self.mcu.queued[0], encode_bar(PATTERNS[main.PATTERN], "Am"))
+        self.assertEqual(self.mcu.queued[1], encode_bar(PATTERNS[main.PATTERN], "G"))
+        self.assertEqual(self.mcu.calls.count("angles"), 6)  # saved pick angles sent once, before playing
+        queued = len(self.mcu.queued)
+        main.loop()  # already playing: nothing new is started
+        self.assertEqual(self.mcu.calls.count("start"), 1)
+        self.assertGreaterEqual(len(self.mcu.queued), queued)
 
-    def test_state_is_pushed_within_a_second(self):
-        main = self.main
-        t = time.time()
-        main.set_chord("G")
-        self.assertTrue(wait_for(lambda: any(k == "state" and m["chord"] == "G" for _, k, m in self.pushed), 1))
-        when = next(w for w, k, m in self.pushed if k == "state" and m["chord"] == "G")
-        self.assertLess(when - t, 1)
-        main.set_chord("")
-
-    def test_bar_pushed_at_each_bar(self):
-        main = self.main
-        main.set_servos(False)
-        main.play("Strum")
-        self.assertTrue(wait_for(lambda: any(k == "bar" for _, k, _m in self.pushed)))
-        main.stop_playing()
+    def test_knob_at_zero_stops_and_turning_it_up_starts_again(self):
+        main = self.load()
+        main.loop()
+        self.assertTrue(wait_for(lambda: self.mcu.queued))
+        self.mcu.knob = 0
+        self.mcu.knob_stop()
         self.assertTrue(wait_for(lambda: main.player.state["playing"] is None))
-        bar = next(m for _, k, m in self.pushed if k == "bar")
-        self.assertTrue({"start", "steps", "chord", "next", "now"} <= set(bar))
+        main.loop()
+        self.assertIsNone(main.player.state["playing"])  # still at 0: stays stopped
+        self.mcu.knob = 24
+        main.loop()
+        self.assertEqual(main.player.state["playing"], main.PATTERN)
+        self.assertTrue(wait_for(lambda: self.mcu.calls.count("start") == 2))
 
-    def test_knob_press_while_idle_is_pushed_as_talk(self):
-        main, before = self.main, self.main.player.state["talk"]
-        self.bridge.click = 1
-        self.assertTrue(wait_for(lambda: any(k == "state" and m["talk"] == before + 1
-                                             for _, k, m in self.pushed), 2), "idle knob press not pushed")
-
-    def test_knob_watcher_pushes_when_the_knob_moves(self):
-        main = self.main
-        self.bridge.knob = 24  # 120 BPM
-        self.assertTrue(wait_for(lambda: any(k == "state" and m["knob_bpm"] == 120
-                                             for _, k, m in self.pushed), 2), "knob move not pushed")
-        self.bridge.knob = 18
-
-    def test_status_still_answers(self):
-        s = self.main.status()
-        self.assertTrue({"playing", "chord", "bpm", "knob_bpm", "bar", "song", "servos", "angles", "now"} <= set(s))
-
-    def test_pluck_and_reset_wait_for_stop(self):
-        main = self.main
-        main.set_servos(False)
-        main.play("Strum")
-        self.assertTrue(wait_for(lambda: main.player.state["bar"]))
-        self.assertEqual(main.pluck(0)["error"], "stop the pattern first")
-        self.assertEqual(main.reset()["error"], "stop the pattern first")
-        main.stop_playing()
+    def test_without_a_knob_it_plays_at_bpm_and_does_not_restart_itself(self):
+        main = self.load(knob=-1)
+        main.loop()
+        self.assertTrue(wait_for(lambda: self.mcu.running))
+        self.assertEqual(self.mcu.bpm, main.BPM)
+        main.player.stop_playing()
         self.assertTrue(wait_for(lambda: main.player.state["playing"] is None))
+        main.loop()
+        self.assertIsNone(main.player.state["playing"])
 
-    def test_routes_answer_as_before(self):
-        main = self.main
-        self.assertIn("Random", main.patterns()["patterns"])
-        self.assertIn("Am", main.chords()["chords"])
-        self.assertFalse(main.set_angles(9, 70, 120)["ok"])
-        self.assertTrue(main.set_song("Am,G")["ok"] and main.set_song("")["song"] is None)
-        self.assertTrue(main.set_tempo(100)["ok"])
-        self.assertTrue(main.steps("Strum")["ok"])
-        self.assertEqual(set(main.config()["voice"]), {"enabled", "key", "voice_id"})
-        self.assertIn("board", main.debug())
-        self.assertFalse(main.pluck(7)["ok"])
+    def test_waits_while_the_board_does_not_answer(self):
+        main = self.load()
+        with main.board.lock:  # busy board
+            main.loop()
+        self.assertIsNone(main.player.state["playing"])
+        self.assertFalse(main.started)
+        main.loop()
+        self.assertEqual(main.player.state["playing"], main.PATTERN)
 
 
 if __name__ == "__main__":

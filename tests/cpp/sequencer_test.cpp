@@ -1,6 +1,6 @@
 // Host test of the sketch's pure C++ parts: sequencer.h and servo_out.h's edge plan.
 // Build and run (scripts/test.sh does this):
-//   g++ -std=c++11 -Wall -Wextra -Werror -I servo-strummer/sketch tests/cpp/sequencer_test.cpp -o /tmp/seq && /tmp/seq tests/bar_vectors.json
+//   g++ -std=c++11 -Wall -Wextra -Werror -I solo-strings/sketch tests/cpp/sequencer_test.cpp -o /tmp/seq && /tmp/seq tests/bar_vectors.json
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

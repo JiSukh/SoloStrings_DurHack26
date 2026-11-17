@@ -1,11 +1,7 @@
-.claude/settings.local.json
-.claude/worktrees/
-.env*
-node_modules/
 __pycache__/
 .venv/
-.claude/settings.json
-.orchestrator/
-servo-strummer/data/
-secrets.env
-*.secrets.env
+.env*
+# made by App Lab inside the app folder when it runs
+solo-strings/.cache/
+solo-strings/data/
+solo-strings.zip

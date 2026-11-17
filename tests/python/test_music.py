@@ -1,5 +1,5 @@
 """Every pattern must encode into messages the sketch accepts (CI has no board or Arduino core,
-so this is the check that runs everywhere). Moved from tests/servo_strummer_test.sh."""
+so this is the check that runs everywhere). Run by tests/solo_strings_test.sh."""
 
 import random
 import unittest
